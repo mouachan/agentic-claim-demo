@@ -35,9 +35,11 @@ Session suivante: À continuer
   3. retrieve_similar_claims
   4. make_final_decision
 
-## ⚠️ Problèmes Restants à Résoudre
+## ✅ Problèmes RÉSOLUS
 
-### Problème 1: PostgreSQL ENUM - Noms des Steps
+### Problème 1: PostgreSQL ENUM - Noms des Steps ✅
+**Status:** Solution créée, à appliquer sur le cluster
+
 **Erreur:**
 ```
 ERROR: invalid input value for enum processing_step: "ocr_document"
@@ -46,96 +48,89 @@ ERROR: invalid input value for enum processing_step: "ocr_document"
 **Cause:**
 La base de données PostgreSQL a un ENUM `processing_step` qui ne contient pas les nouveaux noms de steps générés par l'orchestrateur intelligent.
 
-**Steps actuels dans la DB:**
-- Probablement: `ocr`, `guardrails`, `rag`, `decision`
+**Solution créée:**
+Migration SQL créée dans `database/migrations/001_add_intelligent_orchestrator_steps.sql`
 
-**Nouveaux steps nécessaires:**
-- `ocr_document`
-- `retrieve_user_info`
-- `retrieve_similar_claims`
-- `make_final_decision`
+```sql
+ALTER TYPE processing_step ADD VALUE IF NOT EXISTS 'ocr_document';
+ALTER TYPE processing_step ADD VALUE IF NOT EXISTS 'retrieve_user_info';
+ALTER TYPE processing_step ADD VALUE IF NOT EXISTS 'retrieve_similar_claims';
+ALTER TYPE processing_step ADD VALUE IF NOT EXISTS 'make_final_decision';
+```
 
-**Solutions possibles:**
-1. **Option A (Recommandée):** Ajouter les nouveaux noms au ENUM PostgreSQL
-   ```sql
-   ALTER TYPE processing_step ADD VALUE 'ocr_document';
-   ALTER TYPE processing_step ADD VALUE 'retrieve_user_info';
-   ALTER TYPE processing_step ADD VALUE 'retrieve_similar_claims';
-   ALTER TYPE processing_step ADD VALUE 'make_final_decision';
-   ```
+**À appliquer quand le cluster démarre:**
+```bash
+oc exec -n claims-demo -it statefulset/postgresql -- \
+  psql -U claimsuser -d claimsdb -c "
+    ALTER TYPE processing_step ADD VALUE IF NOT EXISTS 'ocr_document';
+    ALTER TYPE processing_step ADD VALUE IF NOT EXISTS 'retrieve_user_info';
+    ALTER TYPE processing_step ADD VALUE IF NOT EXISTS 'retrieve_similar_claims';
+    ALTER TYPE processing_step ADD VALUE IF NOT EXISTS 'make_final_decision';
+  "
+```
 
-2. **Option B:** Mapper les nouveaux noms vers les anciens dans le code
-   - Dans `server.py`, avant d'écrire dans la DB
-   - Ajouter un dictionnaire de mapping:
-     ```python
-     STEP_NAME_MAPPING = {
-         "ocr_document": "ocr",
-         "retrieve_user_info": "rag",
-         "retrieve_similar_claims": "rag",
-         "make_final_decision": "decision"
-     }
-     ```
+### Problème 2: Backend API Claims Endpoint ✅
+**Status:** Problème identifié - pas de bug, mauvaise URL utilisée
 
-3. **Option C:** Supprimer le ENUM et utiliser VARCHAR
-   - Plus flexible mais moins de validation
-
-**Fichier à modifier:** `/Users/mouchan/projects/agentic-claim-demo/database/init.sql` ou migration Alembic
-
-### Problème 2: Backend API Claims Endpoint
-**Observation:**
-- Backend est accessible: `https://backend-claims-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com/`
-- Root endpoint fonctionne (retourne status healthy)
+**Ce qui semblait être un problème:**
 - `/api/claims` retourne 404 "Not Found"
-- `/docs` retourne aussi 404
 
-**Causes possibles:**
-1. Les routes API ne sont pas configurées correctement
-2. Le préfixe `/api` n'est pas appliqué
-3. Le backend n'a pas été déployé avec les bons endpoints
+**Cause identifiée:**
+Le prefix API est `/api/v1` et non `/api` (configuration intentionnelle pour versionning).
 
-**À investiguer:**
-- Vérifier le fichier `backend/app/main.py` pour voir comment les routes sont configurées
-- Vérifier si `app.include_router(claims.router, prefix="/api")` est présent
-- Relire les logs backend pour voir si les routes sont bien enregistrées au démarrage
+**Configuration:**
+- `backend/app/core/config.py:20` → `api_v1_prefix: str = "/api/v1"`
+- Routes enregistrées: `/api/v1/claims`, `/api/v1/documents`
 
-**Fichiers à vérifier:**
-- `/Users/mouchan/projects/agentic-claim-demo/backend/app/main.py`
-- `/Users/mouchan/projects/agentic-claim-demo/backend/app/api/claims.py`
+**URLs correctes:**
+- ✅ `https://backend-claims-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com/api/v1/claims`
+- ✅ `https://backend-claims-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com/api/v1/documents`
+- ❌ ~~`/api/claims`~~ (404)
 
-### Problème 3: Test End-to-End Incomplet
-Impossible de tester le traitement complet d'un claim car:
-- L'endpoint `/api/claims` n'est pas accessible
-- Besoin de pouvoir lister les claims
-- Besoin de pouvoir déclencher le traitement
+**Frontend déjà configuré correctement:**
+- `frontend/src/services/api.ts:10` → `API_BASE_URL = '/api/v1'`
+
+**Script de test créé:**
+- `scripts/test-api-endpoints.sh` avec toutes les bonnes URLs
+
+### Problème 3: Test End-to-End Incomplet ⏳
+**Status:** Prêt à tester une fois le cluster démarré
+
+**Bloqueurs résolus:**
+- ✅ Endpoint API correct identifié (`/api/v1/claims`)
+- ✅ Migration PostgreSQL ENUM créée
+- ✅ Script de test créé
+
+**Reste à faire:**
+- Appliquer la migration PostgreSQL
+- Tester le workflow complet de traitement d'un claim
+- Vérifier l'intégration frontend → backend → orchestrateur
 
 ## 📋 Tâches pour la Prochaine Session
 
-### Priorité 1: Fix PostgreSQL ENUM
+### Priorité 1: Appliquer Migration PostgreSQL ✨
+- [ ] Attendre que le cluster démarre
 - [ ] Se connecter à PostgreSQL
-- [ ] Vérifier les valeurs actuelles du ENUM `processing_step`
-- [ ] Choisir entre Option A, B ou C
-- [ ] Appliquer la solution (ALTER TYPE ou modifier le code)
-- [ ] Tester que le logging des steps fonctionne
+- [ ] Appliquer la migration: `database/migrations/001_add_intelligent_orchestrator_steps.sql`
+- [ ] Vérifier les nouvelles valeurs ENUM
+- [ ] Redémarrer le backend si nécessaire
 
-### Priorité 2: Fix Backend API Routes
-- [ ] Vérifier `backend/app/main.py`
-- [ ] S'assurer que les routes `/api/claims` sont bien configurées
-- [ ] Vérifier les logs de démarrage du backend
-- [ ] Redéployer le backend si nécessaire
-- [ ] Tester `GET /api/claims`
-
-### Priorité 3: Test End-to-End Complet
-- [ ] Lister les claims via l'API
-- [ ] Déclencher le traitement d'un claim
+### Priorité 2: Test End-to-End Complet
+- [ ] Exécuter le script de test: `./scripts/test-api-endpoints.sh`
+- [ ] Lister les claims via l'API: `GET /api/v1/claims`
+- [ ] Déclencher le traitement d'un claim: `POST /api/v1/claims/{id}/process`
 - [ ] Vérifier les logs de l'orchestrateur
-- [ ] Vérifier que les steps sont bien enregistrés dans la DB
+- [ ] Vérifier que les steps sont bien enregistrés dans la DB (plus d'erreur ENUM)
 - [ ] Vérifier le résultat final dans la DB
-- [ ] Tester via le frontend si disponible
+- [ ] Tester via le frontend
 
-### Priorité 4: Documentation
-- [ ] Mettre à jour le README principal avec les dernières modifications
-- [ ] Documenter la solution au problème ENUM
-- [ ] Ajouter des exemples de requêtes API
+### Priorité 3: Documentation et Nettoyage
+- [x] Migration SQL créée (`database/migrations/001_add_intelligent_orchestrator_steps.sql`)
+- [x] Script de test API créé (`scripts/test-api-endpoints.sh`)
+- [x] Documentation des fixes (`FIXES-2025-12-24.md`)
+- [x] TODO mis à jour
+- [ ] Commit des changements
+- [ ] Mettre à jour le README principal avec les nouveaux endpoints
 
 ## 🔧 Commandes Utiles pour Demain
 
