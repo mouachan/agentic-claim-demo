@@ -46,6 +46,10 @@ providers:
         user: ${env.POSTGRES_USER:=claims_user}
         password: ${env.POSTGRES_PASSWORD:=claims_pass}
         collection_name: llama_vectors
+        kvstore:
+          type: sqlite
+          db_path: /opt/app-root/src/.llama/distributions/rh/pgvector_metadata.db
+          namespace: null
 
   safety:
     # Placeholder safety provider - required by agents
