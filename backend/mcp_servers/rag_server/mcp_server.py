@@ -20,10 +20,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from rag_logic import (
-    retrieve_user_info_logic,
-    retrieve_similar_claims_logic,
-    search_knowledge_base_logic
+from server import (
+    retrieve_user_info,
+    retrieve_similar_claims,
+    search_knowledge_base,
+    RetrieveUserInfoRequest,
+    RetrieveSimilarClaimsRequest,
+    SearchKnowledgeBaseRequest
 )
 
 # Configure logging
@@ -247,16 +250,11 @@ async def execute_retrieve_user_info(request: RetrieveUserInfoRequest) -> JSONRe
     logger.info(f"Executing retrieve_user_info for user: {request.user_id}")
 
     try:
-        result = await retrieve_user_info_logic(
-            user_id=request.user_id,
-            query=request.query,
-            top_k=request.top_k,
-            include_contracts=request.include_contracts
-        )
+        result = await retrieve_user_info(request)
 
-        logger.info(f"Retrieved {len(result['contracts'])} contracts for user {request.user_id}")
+        logger.info(f"Retrieved {len(result.contracts)} contracts for user {request.user_id}")
 
-        return JSONResponse(content=result, status_code=200)
+        return JSONResponse(content=result.model_dump(), status_code=200)
 
     except Exception as e:
         logger.error(f"Error executing retrieve_user_info: {str(e)}")
@@ -276,19 +274,11 @@ async def execute_retrieve_similar_claims(request: RetrieveSimilarClaimsRequest)
     logger.info(f"Executing retrieve_similar_claims (query length: {len(request.claim_text)} chars)")
 
     try:
-        similar_claims = await retrieve_similar_claims_logic(
-            claim_text=request.claim_text,
-            claim_type=request.claim_type,
-            top_k=request.top_k,
-            min_similarity=request.min_similarity
-        )
+        result = await retrieve_similar_claims(request)
 
-        logger.info(f"Found {len(similar_claims)} similar claims")
+        logger.info(f"Found {len(result.similar_claims)} similar claims")
 
-        return JSONResponse(
-            content={"similar_claims": similar_claims},
-            status_code=200
-        )
+        return JSONResponse(content=result.model_dump(), status_code=200)
 
     except Exception as e:
         logger.error(f"Error executing retrieve_similar_claims: {str(e)}")
@@ -308,15 +298,11 @@ async def execute_search_knowledge_base(request: SearchKnowledgeBaseRequest) -> 
     logger.info(f"Executing search_knowledge_base: {request.query}")
 
     try:
-        result = await search_knowledge_base_logic(
-            query=request.query,
-            filters=request.filters,
-            top_k=request.top_k
-        )
+        result = await search_knowledge_base(request)
 
-        logger.info(f"Found {len(result['results'])} knowledge base articles")
+        logger.info(f"Found {len(result.results)} knowledge base articles")
 
-        return JSONResponse(content=result, status_code=200)
+        return JSONResponse(content=result.model_dump(), status_code=200)
 
     except Exception as e:
         logger.error(f"Error executing search_knowledge_base: {str(e)}")

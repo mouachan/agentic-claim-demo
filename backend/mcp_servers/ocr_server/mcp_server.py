@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from ocr_logic import process_ocr_document
+from server import ocr_document, OCRRequest
 
 # Configure logging
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -169,20 +169,21 @@ async def execute_ocr_document(request: ToolExecutionRequest) -> JSONResponse:
     logger.info(f"Executing ocr_document tool for: {request.document_path}")
 
     try:
-        result = await process_ocr_document(
+        # Convert ToolExecutionRequest to OCRRequest
+        ocr_request = OCRRequest(
             document_path=request.document_path,
             document_type=request.document_type,
             language=request.language
         )
 
-        if result["success"]:
-            logger.info(f"OCR successful, confidence: {result['confidence']:.2f}")
-        else:
-            logger.error(f"OCR failed: {result['errors']}")
+        # Call the ocr_document function
+        result = await ocr_document(ocr_request)
+
+        logger.info(f"OCR completed with success: {result.success}")
 
         return JSONResponse(
-            content=result,
-            status_code=200 if result["success"] else 500
+            content=result.model_dump(),
+            status_code=200 if result.success else 500
         )
 
     except Exception as e:
