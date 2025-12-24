@@ -16,11 +16,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy server code
-COPY mcp_server.py .
-COPY ocr_logic.py .
+# Copy server code (only new qwen-vl based server)
 COPY prompts.py .
 COPY server.py .
+COPY mcp_server.py .
 
 # Fix permissions for OpenShift
 RUN chgrp -R 0 /app && \
