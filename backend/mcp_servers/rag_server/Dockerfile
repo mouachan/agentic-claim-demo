@@ -8,11 +8,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy server code
-COPY mcp_server.py .
-COPY rag_logic.py .
+# Copy server code (only new LlamaStack-based server)
 COPY prompts.py .
 COPY server.py .
+COPY mcp_server.py .
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && \
