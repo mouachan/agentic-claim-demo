@@ -156,11 +156,11 @@ tool_groups:
   - toolgroup_id: mcp::ocr-server
     provider_id: model-context-protocol
     mcp_endpoint:
-     uri: "http://ocr-mcp-server.claims-demo.svc.cluster.local:8080/sse"
+      uri: http://ocr-mcp-server.claims-demo.svc.cluster.local:8080/sse
   - toolgroup_id: mcp::rag-server
     provider_id: model-context-protocol
     mcp_endpoint:
-     uri: "http://rag-mcp-server.claims-demo.svc.cluster.local:8080/sse"
+      uri: http://rag-mcp-server.claims-demo.svc.cluster.local:8080/sse
 
 server:
   port: 8321
