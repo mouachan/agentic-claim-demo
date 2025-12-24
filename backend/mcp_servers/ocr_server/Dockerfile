@@ -20,8 +20,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy server code
-COPY server.py .
+COPY mcp_server.py .
+COPY ocr_logic.py .
 COPY prompts.py .
+COPY server.py .
 
 # Fix permissions for OpenShift
 RUN chgrp -R 0 /app && \
@@ -31,4 +33,5 @@ USER 1001
 
 EXPOSE 8080
 
-CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]
+# Start MCP server with SSE protocol
+CMD ["python", "-m", "uvicorn", "mcp_server:app", "--host", "0.0.0.0", "--port", "8080"]
