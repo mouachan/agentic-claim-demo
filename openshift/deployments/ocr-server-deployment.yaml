@@ -15,28 +15,10 @@ spec:
       labels:
         app: ocr-server
     spec:
-      initContainers:
-      - name: install-deps
-        image: registry.access.redhat.com/ubi9/python-311:latest
-        command:
-        - /bin/sh
-        - -c
-        - |
-          pip install --no-cache-dir --target=/deps \
-            fastapi uvicorn httpx python-multipart pydantic pillow pytesseract pdf2image
-        volumeMounts:
-        - name: deps
-          mountPath: /deps
       containers:
       - name: ocr-server
-        image: registry.access.redhat.com/ubi9/python-311:latest
-        command:
-        - /bin/sh
-        - -c
-        - |
-          export PYTHONPATH=/deps:$PYTHONPATH && \
-          cd /app && python -m uvicorn server:app --host 0.0.0.0 --port 8080
-        workingDir: /app
+        image: quay.io/mouachan/agentic-claims-demo/ocr-server:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
           name: http
@@ -47,10 +29,6 @@ spec:
         - name: PYTHONUNBUFFERED
           value: "1"
         volumeMounts:
-        - name: code
-          mountPath: /app
-        - name: deps
-          mountPath: /deps
         - name: claim-documents
           mountPath: /claim_documents
         resources:
@@ -73,11 +51,6 @@ spec:
           initialDelaySeconds: 30
           periodSeconds: 5
       volumes:
-      - name: code
-        configMap:
-          name: ocr-server-code
-      - name: deps
-        emptyDir: {}
       - name: claim-documents
         persistentVolumeClaim:
           claimName: claim-documents

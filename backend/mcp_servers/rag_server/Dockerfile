@@ -1,4 +1,4 @@
-# MCP RAG Server Dockerfile
+# MCP RAG Server Dockerfile - Lightweight (uses gemma-300m for embeddings)
 FROM python:3.11-slim
 
 WORKDIR /app

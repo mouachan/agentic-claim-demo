@@ -36,49 +36,20 @@ oc wait --for=condition=ready pod -l app=postgresql --timeout=300s
 
 echo ""
 echo "=========================================="
-echo "Step 2: Build and Deploy MCP Servers"
+echo "Step 2: Deploy MCP Servers (from Quay.io)"
 echo "=========================================="
 
-# OCR Server
-echo "Building OCR MCP Server..."
-oc apply -f openshift/imagestreams/ocr-server-is.yaml
-
-# Check if BuildConfig exists, if not create from directory
-if ! oc get bc ocr-server &>/dev/null; then
-    echo "Creating BuildConfig for OCR server..."
-    oc new-build --name=ocr-server \
-        --binary=true \
-        --strategy=docker \
-        --to=ocr-server:latest
-fi
-
-echo "Starting OCR server build from source..."
-oc start-build ocr-server --from-dir=backend/mcp_servers/ocr_server/ --follow
-
-echo "Deploying OCR server..."
+echo "Deploying OCR MCP Server..."
 oc apply -f openshift/deployments/ocr-server-deployment.yaml
 oc apply -f openshift/services/ocr-server-service.yaml
 
-# RAG Server
-echo "Building RAG MCP Server..."
-if ! oc get bc rag-server &>/dev/null; then
-    echo "Creating BuildConfig for RAG server..."
-    oc new-build --name=rag-server \
-        --binary=true \
-        --strategy=docker \
-        --to=rag-server:latest
-fi
-
-echo "Starting RAG server build from source..."
-oc start-build rag-server --from-dir=backend/mcp_servers/rag_server/ --follow
-
-echo "Deploying RAG server..."
+echo "Deploying RAG MCP Server..."
 oc apply -f openshift/deployments/rag-server-deployment.yaml
 oc apply -f openshift/services/rag-server-service.yaml
 
 echo "Waiting for MCP servers to be ready..."
-oc wait --for=condition=ready pod -l app=ocr-mcp-server --timeout=300s || true
-oc wait --for=condition=ready pod -l app=rag-mcp-server --timeout=300s || true
+oc wait --for=condition=ready pod -l app=ocr-server --timeout=300s || true
+oc wait --for=condition=ready pod -l app=rag-server --timeout=300s || true
 
 echo ""
 echo "=========================================="
