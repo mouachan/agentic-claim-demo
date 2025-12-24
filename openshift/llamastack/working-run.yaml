@@ -109,18 +109,7 @@ providers:
 
     - provider_id: model-context-protocol
       provider_type: remote::model-context-protocol
-      config:
-        mcp_servers:
-          - name: ocr-server
-            uri: sse://ocr-mcp-server.claims-demo.svc.cluster.local:8080/mcp/sse
-            tools:
-              - ocr_document
-          - name: rag-server
-            uri: sse://rag-mcp-server.claims-demo.svc.cluster.local:8080/mcp/sse
-            tools:
-              - retrieve_user_info
-              - retrieve_similar_claims
-              - search_knowledge_base
+      config: {}
 
 metadata_store:
   type: sqlite
@@ -164,34 +153,14 @@ benchmarks: []
 tool_groups:
   - toolgroup_id: builtin::rag
     provider_id: rag-runtime
-
-  - toolgroup_id: claims-ocr
+  - toolgroup_id: mcp::ocr-server
     provider_id: model-context-protocol
-    tools:
-      - name: ocr-server::ocr_document
-        description: "Extract text from claim documents (PDF/images) using OCR and LLM validation"
-
-  - toolgroup_id: claims-rag
+    mcp_endpoint:
+     uri: "http://ocr-mcp-server.claims-demo.svc.cluster.local:8080/sse"
+  - toolgroup_id: mcp::rag-server
     provider_id: model-context-protocol
-    tools:
-      - name: rag-server::retrieve_user_info
-        description: "Retrieve user information and insurance contracts using vector search"
-      - name: rag-server::retrieve_similar_claims
-        description: "Find similar historical claims using vector similarity"
-      - name: rag-server::search_knowledge_base
-        description: "Search knowledge base for policy information with LLM synthesis"
-
-  - toolgroup_id: claims-processing
-    provider_id: model-context-protocol
-    tools:
-      - name: ocr-server::ocr_document
-        description: "Extract text from claim documents (PDF/images) using OCR and LLM validation"
-      - name: rag-server::retrieve_user_info
-        description: "Retrieve user information and insurance contracts using vector search"
-      - name: rag-server::retrieve_similar_claims
-        description: "Find similar historical claims using vector similarity"
-      - name: rag-server::search_knowledge_base
-        description: "Search knowledge base for policy information with LLM synthesis"
+    mcp_endpoint:
+     uri: "http://rag-mcp-server.claims-demo.svc.cluster.local:8080/sse"
 
 server:
   port: 8321
