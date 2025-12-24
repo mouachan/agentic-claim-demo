@@ -337,6 +337,134 @@ Provide your analysis in JSON format with:
 
         return result
 
+    async def create_agent_session(
+        self,
+        agent_config: Dict[str, Any],
+        session_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a new agent session with LlamaStack Agents API.
+
+        Args:
+            agent_config: Agent configuration including model, tools, instructions
+            session_name: Optional session name for tracking
+
+        Returns:
+            Session information with session_id
+
+        Raises:
+            LlamaStackError: If the API request fails
+        """
+        payload = {
+            "agent_config": agent_config,
+            "session_name": session_name or f"session_{asyncio.get_event_loop().time()}",
+        }
+
+        try:
+            response = await self.client.post("/agents/session/create", json=payload)
+            response.raise_for_status()
+            result = response.json()
+
+            logger.info(f"Created agent session: {result.get('session_id')}")
+            return result
+
+        except httpx.HTTPStatusError as e:
+            error_msg = f"LlamaStack agents API error: {e.response.status_code} - {e.response.text}"
+            logger.error(error_msg)
+            raise LlamaStackError(error_msg) from e
+        except httpx.RequestError as e:
+            error_msg = f"LlamaStack connection error: {str(e)}"
+            logger.error(error_msg)
+            raise LlamaStackError(error_msg) from e
+
+    @retry(
+        retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+    )
+    async def run_agent_turn(
+        self,
+        session_id: str,
+        messages: List[Dict[str, str]],
+        stream: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Run one turn of the agent in a session.
+
+        The agent will automatically:
+        - Analyze the user message
+        - Determine which tools to call
+        - Execute tools in the right order
+        - Synthesize a final response
+
+        Args:
+            session_id: Session ID from create_agent_session()
+            messages: List of messages to send (typically user message)
+            stream: Whether to stream the response (not implemented yet)
+
+        Returns:
+            Agent turn result with messages, tool calls, and final response
+
+        Raises:
+            LlamaStackError: If the API request fails
+        """
+        payload = {
+            "session_id": session_id,
+            "messages": messages,
+            "stream": stream,
+        }
+
+        try:
+            response = await self.client.post("/agents/turn", json=payload)
+            response.raise_for_status()
+            result = response.json()
+
+            logger.debug(f"Executed agent turn in session {session_id}")
+            return result
+
+        except httpx.HTTPStatusError as e:
+            error_msg = f"LlamaStack agents turn API error: {e.response.status_code} - {e.response.text}"
+            logger.error(error_msg)
+            raise LlamaStackError(error_msg) from e
+        except httpx.RequestError as e:
+            error_msg = f"LlamaStack connection error: {str(e)}"
+            logger.error(error_msg)
+            raise LlamaStackError(error_msg) from e
+
+    async def get_session_messages(
+        self,
+        session_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all messages from an agent session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            List of messages with role, content, tool_calls, etc.
+
+        Raises:
+            LlamaStackError: If the API request fails
+        """
+        try:
+            response = await self.client.get(f"/agents/session/{session_id}/messages")
+            response.raise_for_status()
+            result = response.json()
+
+            messages = result.get("messages", [])
+            logger.debug(f"Retrieved {len(messages)} messages from session {session_id}")
+            return messages
+
+        except httpx.HTTPStatusError as e:
+            error_msg = f"LlamaStack agents session API error: {e.response.status_code} - {e.response.text}"
+            logger.error(error_msg)
+            raise LlamaStackError(error_msg) from e
+        except httpx.RequestError as e:
+            error_msg = f"LlamaStack connection error: {str(e)}"
+            logger.error(error_msg)
+            raise LlamaStackError(error_msg) from e
+
     async def health_check(self) -> bool:
         """
         Check if LlamaStack service is healthy.
