@@ -8,3 +8,6 @@ httpx==0.26.0
 pydantic==2.5.3
 numpy==1.26.3
 sentence-transformers==2.3.1
+
+# MCP Protocol (Server-Sent Events)
+sse-starlette==1.8.2
