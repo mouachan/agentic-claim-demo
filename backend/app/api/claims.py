@@ -6,7 +6,6 @@ import logging
 from typing import List, Optional
 from uuid import UUID
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,8 +125,20 @@ async def process_claim(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Start processing a claim through the MCP orchestrator.
+    Start processing a claim using LlamaStack Agents API.
+
+    The agent will automatically:
+    - Extract data from the document using OCR
+    - Retrieve user contracts and coverage
+    - Find similar historical claims
+    - Search policy knowledge base
+    - Make a final decision with reasoning
     """
+    import time
+    import json
+    from app.llamastack import client as llama_client
+    from app.llamastack.prompts import CLAIMS_PROCESSING_AGENT_INSTRUCTIONS
+
     try:
         # Get the claim
         query = select(models.Claim).where(models.Claim.id == claim_id)
@@ -141,70 +152,154 @@ async def process_claim(
         claim.status = models.ClaimStatus.processing
         await db.commit()
 
-        # Call orchestrator MCP server
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        # Get LlamaStack client
+        llamastack = llama_client.get_llamastack_client()
+
+        # Track processing start time
+        start_time = time.time()
+
+        try:
+            # Create agent session
+            agent_config = {
+                "model": settings.llamastack_default_model,  # llama-instruct-32-3b
+                "toolgroups": ["claims-processing"],  # All 4 tools
+                "instructions": CLAIMS_PROCESSING_AGENT_INSTRUCTIONS,
+                "enable_auto_tool_choice": True,
+                "tool_choice": "auto",
+            }
+
+            session_result = await llamastack.create_agent_session(
+                agent_config=agent_config,
+                session_name=f"claim_{claim_id}"
+            )
+            session_id = session_result["session_id"]
+
+            logger.info(f"Created agent session {session_id} for claim {claim_id}")
+
+            # Prepare user message for the agent
+            user_message = f"""
+Process this insurance claim:
+
+Claim ID: {claim_id}
+User ID: {claim.user_id}
+Document Path: {claim.document_path}
+Claim Type: {claim.claim_type if hasattr(claim, 'claim_type') else 'general'}
+
+Please:
+1. Extract all information from the document using OCR
+2. Retrieve the user's insurance contracts and coverage details
+3. Find similar historical claims for precedent
+4. Determine if the claim should be approved, denied, or requires manual review
+5. Provide detailed reasoning citing relevant policy sections
+
+Workflow configuration:
+- Skip OCR: {process_request.skip_ocr}
+- Enable RAG retrieval: {process_request.enable_rag}
+"""
+
+            # Run agent turn - this will automatically call tools and orchestrate the workflow
+            turn_result = await llamastack.run_agent_turn(
+                session_id=session_id,
+                messages=[{
+                    "role": "user",
+                    "content": user_message
+                }]
+            )
+
+            # Extract tool calls and log them
+            if "messages" in turn_result:
+                for msg in turn_result["messages"]:
+                    # Log tool calls as processing steps
+                    if msg.get("role") == "tool" and msg.get("tool_calls"):
+                        for tool_call in msg["tool_calls"]:
+                            tool_name = tool_call.get("function", {}).get("name", "unknown")
+                            tool_output = tool_call.get("output", {})
+
+                            # Create processing log
+                            log = models.ProcessingLog(
+                                claim_id=claim_id,
+                                step=tool_name,  # Will be mapped to enum
+                                agent_name=f"mcp::{tool_name}",
+                                status="completed",
+                                output_data=tool_output,
+                                started_at=claim.submitted_at,
+                                completed_at=time.time()
+                            )
+                            db.add(log)
+
+            # Extract final assistant response
+            final_response = None
+            for msg in reversed(turn_result.get("messages", [])):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    final_response = msg["content"]
+                    break
+
+            if not final_response:
+                raise ValueError("Agent did not provide a final response")
+
+            # Parse the agent's decision (expecting JSON in the response)
             try:
-                response = await client.post(
-                    f"{settings.orchestrator_server_url}/orchestrate_claim_processing",
-                    json={
-                        "claim_id": str(claim_id),
-                        "document_path": claim.document_path,
-                        "user_id": claim.user_id,
-                        "processing_config": {
-                            "workflow_type": process_request.workflow_type,
-                            "skip_ocr": process_request.skip_ocr,
-                            "skip_guardrails": process_request.skip_guardrails,
-                            "enable_rag": process_request.enable_rag
-                        }
-                    }
-                )
+                # Try to extract JSON from the response
+                decision_data = json.loads(final_response) if "{" in final_response else {
+                    "recommendation": "manual_review",
+                    "confidence": 0.5,
+                    "reasoning": final_response
+                }
+            except json.JSONDecodeError:
+                logger.warning("Could not parse agent response as JSON, using fallback")
+                decision_data = {
+                    "recommendation": "manual_review",
+                    "confidence": 0.5,
+                    "reasoning": final_response
+                }
 
-                if response.status_code == 200:
-                    orchestrator_result = response.json()
+            # Calculate processing time
+            processing_time_ms = int((time.time() - start_time) * 1000)
 
-                    # Update claim with results
-                    claim.status = models.ClaimStatus.completed if orchestrator_result.get("status") == "completed" else models.ClaimStatus.failed
-                    claim.total_processing_time_ms = orchestrator_result.get("total_processing_time_ms")
-
-                    # Create decision record if available
-                    if orchestrator_result.get("final_decision"):
-                        decision_data = orchestrator_result["final_decision"]
-                        decision = models.ClaimDecision(
-                            claim_id=claim_id,
-                            decision=decision_data.get("recommendation"),
-                            confidence=decision_data.get("confidence"),
-                            reasoning=decision_data.get("reasoning"),
-                            relevant_policies={"policies": decision_data.get("relevant_policies", [])},
-                            llm_model="llama-3.1-8b-instruct",
-                            requires_manual_review=(decision_data.get("recommendation") == "manual_review")
-                        )
-                        db.add(decision)
-
-                    await db.commit()
-
-                    logger.info(f"Claim {claim_id} processed successfully")
-                    return schemas.ProcessClaimResponse(
-                        claim_id=claim_id,
-                        status=claim.status.value,
-                        message="Processing completed",
-                        processing_started_at=claim.submitted_at
-                    )
-                else:
-                    claim.status = models.ClaimStatus.failed
-                    await db.commit()
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Orchestrator error: {response.status_code}"
-                    )
-
-            except httpx.RequestError as e:
+            # Update claim based on recommendation
+            recommendation = decision_data.get("recommendation", "manual_review")
+            if recommendation == "approve":
+                claim.status = models.ClaimStatus.completed
+            elif recommendation == "deny":
                 claim.status = models.ClaimStatus.failed
-                await db.commit()
-                logger.error(f"Error calling orchestrator: {str(e)}")
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Orchestrator unavailable: {str(e)}"
-                )
+            else:  # manual_review
+                claim.status = models.ClaimStatus.manual_review
+
+            claim.total_processing_time_ms = processing_time_ms
+
+            # Create decision record
+            decision = models.ClaimDecision(
+                claim_id=claim_id,
+                decision=recommendation,
+                confidence=decision_data.get("confidence", 0.0),
+                reasoning=decision_data.get("reasoning", ""),
+                relevant_policies={
+                    "policies": decision_data.get("relevant_policies", []),
+                    "estimated_coverage": decision_data.get("estimated_coverage_amount")
+                },
+                llm_model=settings.llamastack_default_model,
+                requires_manual_review=(recommendation == "manual_review")
+            )
+            db.add(decision)
+
+            await db.commit()
+
+            logger.info(f"Claim {claim_id} processed via Agents API: {recommendation}")
+            return schemas.ProcessClaimResponse(
+                claim_id=claim_id,
+                status=claim.status.value,
+                message=f"Processing completed: {recommendation}",
+                processing_started_at=claim.submitted_at
+            )
+
+        except llama_client.LlamaStackError as e:
+            claim.status = models.ClaimStatus.failed
+            await db.commit()
+            logger.error(f"LlamaStack Agents API error: {str(e)}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Agent processing failed: {str(e)}"
+            )
 
     except HTTPException:
         raise
