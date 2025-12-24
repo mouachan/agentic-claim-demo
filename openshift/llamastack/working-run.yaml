@@ -37,14 +37,15 @@ providers:
         url: http://mistral-3-14b-instruct-predictor.edg-demo.svc.cluster.local:80/v1
 
   vector_io:
-    - provider_id: milvus
-      provider_type: inline::milvus
+    - provider_id: pgvector
+      provider_type: remote::pgvector
       config:
-        db_path: /opt/app-root/src/.llama/distributions/rh/milvus.db
-        kvstore:
-          db_path: /opt/app-root/src/.llama/distributions/rh/milvus_registry.db
-          namespace: null
-          type: sqlite
+        host: postgresql.claims-demo.svc.cluster.local
+        port: 5432
+        database: claims_db
+        user: ${env.POSTGRES_USER:=claims_user}
+        password: ${env.POSTGRES_PASSWORD:=claims_pass}
+        collection_name: llama_vectors
 
   safety:
     # Placeholder safety provider - required by agents
@@ -102,7 +103,9 @@ providers:
   tool_runtime:
     - provider_id: rag-runtime
       provider_type: inline::rag-runtime
-      config: {}
+      config:
+        vector_db_ids:
+          - claims_vector_db
 
     - provider_id: model-context-protocol
       provider_type: remote::model-context-protocol
@@ -146,7 +149,14 @@ models:
       display_name: mistral-3-14b-instruct
 
 shields: []
-vector_dbs: []
+
+vector_dbs:
+  - vector_db_id: claims_vector_db
+    provider_id: pgvector
+    provider_vector_db_id: claims_db
+    embedding_model: granite-embedding-125m
+    embedding_dimension: 768
+
 datasets: []
 scoring_fns: []
 benchmarks: []
