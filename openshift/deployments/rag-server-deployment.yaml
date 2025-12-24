@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-server
+  namespace: claims-demo
+  labels:
+    app: rag-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-server
+  template:
+    metadata:
+      labels:
+        app: rag-server
+    spec:
+      initContainers:
+      - name: install-deps
+        image: registry.access.redhat.com/ubi9/python-311:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          pip install --no-cache-dir --target=/deps \
+            fastapi uvicorn sqlalchemy psycopg2-binary pgvector httpx pydantic numpy sentence-transformers
+        volumeMounts:
+        - name: deps
+          mountPath: /deps
+      containers:
+      - name: rag-server
+        image: registry.access.redhat.com/ubi9/python-311:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          export PYTHONPATH=/deps:$PYTHONPATH && \
+          cd /app && python -m uvicorn server:app --host 0.0.0.0 --port 8080
+        workingDir: /app
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        env:
+        - name: LLAMASTACK_ENDPOINT
+          value: "http://claims-llamastack-service.claims-demo.svc.cluster.local:8321"
+        - name: EMBEDDING_URL
+          value: "https://embeddinggemma-300m-edg-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com"
+        - name: POSTGRES_HOST
+          value: "postgresql.claims-demo.svc.cluster.local"
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          value: "claims_db"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        - name: deps
+          mountPath: /deps
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "300m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 90
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 45
+          periodSeconds: 5
+      volumes:
+      - name: code
+        configMap:
+          name: rag-server-code
+      - name: deps
+        emptyDir: {}

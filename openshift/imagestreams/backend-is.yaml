@@ -1,0 +1,10 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: backend
+  namespace: claims-demo
+  labels:
+    app: backend
+spec:
+  lookupPolicy:
+    local: true

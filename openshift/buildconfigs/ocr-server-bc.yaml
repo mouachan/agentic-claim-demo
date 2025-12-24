@@ -1,0 +1,25 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: ocr-server
+  namespace: claims-demo
+  labels:
+    app: ocr-server
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: ocr-server:latest
+  source:
+    type: Git
+    git:
+      uri: https://github.com/your-repo/agentic-claim-demo.git
+      ref: main
+    contextDir: backend/mcp_servers/ocr_server
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  triggers:
+  - type: ConfigChange
+  - type: ImageChange

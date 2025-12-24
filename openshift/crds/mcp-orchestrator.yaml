@@ -1,0 +1,280 @@
+apiVersion: mcp.opendatahub.io/v1
+kind: MCPServer
+metadata:
+  name: orchestrator-server
+  namespace: claims-demo
+  labels:
+    app: claims-processing
+    component: mcp-orchestrator
+    mcp-role: orchestrator
+spec:
+  # Server configuration
+  displayName: "Claims Processing Orchestrator"
+  description: "MCP orchestrator server that coordinates OCR, Guardrails, and RAG agents"
+  type: custom
+
+  # Container image
+  image: quay.io/claims-demo/orchestrator-server:latest
+  imagePullPolicy: Always
+
+  # Reference to LlamaStack for decision-making
+  llamaStackRef: claims-llamastack
+
+  # MCP Tools exposed by this server
+  tools:
+    - name: orchestrate_claim_processing
+      description: "Orchestrate the complete claims processing workflow"
+      inputSchema:
+        type: object
+        properties:
+          claim_id:
+            type: string
+            description: "Unique claim identifier"
+          document_path:
+            type: string
+            description: "Path to the claim document"
+          user_id:
+            type: string
+            description: "User ID associated with the claim"
+          processing_config:
+            type: object
+            description: "Optional configuration for processing workflow"
+            properties:
+              workflow_type:
+                type: string
+                enum: ["standard", "expedited", "manual_review"]
+                default: "standard"
+              skip_ocr:
+                type: boolean
+                default: false
+              skip_guardrails:
+                type: boolean
+                default: false
+              enable_rag:
+                type: boolean
+                default: true
+              llm_decision_threshold:
+                type: number
+                default: 0.7
+                description: "Confidence threshold for automated decisions"
+        required: ["claim_id", "document_path", "user_id"]
+      outputSchema:
+        type: object
+        properties:
+          claim_id:
+            type: string
+          status:
+            type: string
+            enum: ["completed", "failed", "requires_manual_review"]
+          processing_steps:
+            type: array
+            description: "Detailed log of each processing step"
+            items:
+              type: object
+              properties:
+                step_name:
+                  type: string
+                agent:
+                  type: string
+                status:
+                  type: string
+                duration_ms:
+                  type: number
+                output:
+                  type: object
+                error:
+                  type: string
+          ocr_results:
+            type: object
+            description: "Results from OCR processing"
+          guardrails_results:
+            type: object
+            description: "Results from guardrails validation"
+          rag_results:
+            type: object
+            description: "Retrieved user information and similar claims"
+          final_decision:
+            type: object
+            properties:
+              recommendation:
+                type: string
+                enum: ["approve", "deny", "manual_review"]
+              confidence:
+                type: number
+              reasoning:
+                type: string
+              relevant_policies:
+                type: array
+                items:
+                  type: string
+          total_processing_time_ms:
+            type: number
+          warnings:
+            type: array
+            items:
+              type: string
+
+    - name: get_processing_status
+      description: "Get the current status of claim processing"
+      inputSchema:
+        type: object
+        properties:
+          claim_id:
+            type: string
+        required: ["claim_id"]
+      outputSchema:
+        type: object
+        properties:
+          claim_id:
+            type: string
+          status:
+            type: string
+          current_step:
+            type: string
+          progress_percentage:
+            type: number
+          estimated_completion_time:
+            type: string
+
+  # MCP Server dependencies (other MCP servers to connect to)
+  dependencies:
+    - name: ocr-server
+      service: ocr-server.claims-demo.svc.cluster.local
+      port: 8080
+      required: true
+    - name: rag-server
+      service: rag-server.claims-demo.svc.cluster.local
+      port: 8080
+      required: true
+
+  # Environment variables
+  env:
+    - name: OCR_SERVER_URL
+      value: "http://ocr-server.claims-demo.svc.cluster.local:8080"
+    - name: RAG_SERVER_URL
+      value: "http://rag-server.claims-demo.svc.cluster.local:8080"
+    - name: GUARDRAILS_SERVICE_URL
+      value: "http://claims-guardrails.claims-demo.svc.cluster.local:8080"
+    - name: POSTGRES_HOST
+      value: "postgresql-service.claims-demo.svc.cluster.local"
+    - name: POSTGRES_PORT
+      value: "5432"
+    - name: POSTGRES_DB
+      value: "claims_db"
+    - name: POSTGRES_USER
+      valueFrom:
+        secretKeyRef:
+          name: postgresql-secret
+          key: username
+    - name: POSTGRES_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: postgresql-secret
+          key: password
+    - name: DEFAULT_WORKFLOW_TYPE
+      value: "standard"
+    - name: MAX_PROCESSING_TIME_SECONDS
+      value: "300"  # 5 minutes max
+    - name: RETRY_ATTEMPTS
+      value: "3"
+    - name: RETRY_DELAY_SECONDS
+      value: "5"
+    - name: ENABLE_ASYNC_PROCESSING
+      value: "true"
+    - name: LOG_LEVEL
+      value: "INFO"
+
+  # Resource requirements
+  resources:
+    requests:
+      cpu: "500m"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  # Health checks
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8080
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Autoscaling configuration
+  autoscaling:
+    enabled: true
+    minReplicas: 2  # Keep 2 for high availability
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 75
+
+  # Workflow execution settings
+  workflow:
+    # Standard workflow steps order
+    standardSteps:
+      - name: ocr
+        agent: ocr-server
+        required: true
+        timeout: 60s
+      - name: guardrails
+        agent: guardrails
+        required: true
+        timeout: 30s
+      - name: rag_user_info
+        agent: rag-server
+        required: false
+        timeout: 30s
+      - name: rag_similar_claims
+        agent: rag-server
+        required: false
+        timeout: 30s
+      - name: llm_decision
+        agent: llamastack
+        required: true
+        timeout: 60s
+
+    # Error handling
+    errorHandling:
+      retryOnFailure: true
+      maxRetries: 3
+      fallbackToManualReview: true
+      notifyOnFailure: true
+
+  # Monitoring
+  monitoring:
+    enabled: true
+    metrics:
+      - orchestrator_workflows_total
+      - orchestrator_workflow_duration_seconds
+      - orchestrator_step_duration_seconds
+      - orchestrator_failures_total
+      - orchestrator_manual_reviews_total
+      - orchestrator_active_workflows
+
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    capabilities:
+      drop:
+        - ALL
+
+  # Service account with permissions to call other MCP servers
+  serviceAccount:
+    name: orchestrator-sa
+    create: true
+    annotations:
+      description: "Service account for orchestrator to call other MCP servers"
