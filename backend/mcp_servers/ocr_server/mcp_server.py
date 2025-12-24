@@ -84,7 +84,7 @@ class HealthResponse(BaseModel):
 # MCP PROTOCOL ENDPOINTS (SSE)
 # ============================================================================
 
-@app.get("/mcp/sse")
+@app.get("/sse")
 async def mcp_sse_endpoint():
     """
     Server-Sent Events endpoint for MCP protocol.
@@ -268,7 +268,7 @@ async def root():
         "protocol": "Model Context Protocol (MCP) with SSE",
         "status": "running",
         "endpoints": {
-            "mcp_sse": "/mcp/sse",
+            "mcp_sse": "/sse",
             "tool_execution": "/mcp/tools/{tool_name}",
             "health_live": "/health/live",
             "health_ready": "/health/ready"
@@ -276,10 +276,10 @@ async def root():
         "tools": [tool["function"]["name"] for tool in MCP_TOOLS],
         "tools_detail": MCP_TOOLS,
         "documentation": {
-            "mcp_protocol": "Connect to /mcp/sse to discover tools via Server-Sent Events",
+            "mcp_protocol": "Connect to /sse to discover tools via Server-Sent Events",
             "tool_execution": "POST to /mcp/tools/ocr_document to execute OCR",
             "example": {
-                "discover_tools": "curl -N http://ocr-server:8080/mcp/sse",
+                "discover_tools": "curl -N http://ocr-server:8080/sse",
                 "execute_tool": "curl -X POST http://ocr-server:8080/mcp/tools/ocr_document -d '{\"document_path\": \"/path/to/doc.pdf\"}'"
             }
         }
@@ -304,7 +304,7 @@ if __name__ == "__main__":
 
     port = int(os.getenv("PORT", "8080"))
     logger.info(f"Starting MCP OCR Server on port {port}")
-    logger.info(f"MCP SSE endpoint: http://0.0.0.0:{port}/mcp/sse")
+    logger.info(f"MCP SSE endpoint: http://0.0.0.0:{port}/sse")
     logger.info(f"Tools available: {[t['function']['name'] for t in MCP_TOOLS]}")
 
     uvicorn.run(

@@ -2,7 +2,7 @@
 MCP RAG Server - Model Context Protocol server with SSE for RAG operations
 
 This server exposes RAG (Retrieval-Augmented Generation) functionality via MCP using SSE.
-LlamaStack connects to /mcp/sse to discover 3 tools:
+LlamaStack connects to /sse to discover 3 tools:
 - retrieve_user_info
 - retrieve_similar_claims
 - search_knowledge_base
@@ -172,7 +172,7 @@ class HealthResponse(BaseModel):
 # MCP PROTOCOL ENDPOINTS (SSE)
 # ============================================================================
 
-@app.get("/mcp/sse")
+@app.get("/sse")
 async def mcp_sse_endpoint():
     """
     Server-Sent Events endpoint for MCP protocol.
@@ -418,7 +418,7 @@ async def root():
         "protocol": "Model Context Protocol (MCP) with SSE",
         "status": "running",
         "endpoints": {
-            "mcp_sse": "/mcp/sse",
+            "mcp_sse": "/sse",
             "tool_execution": "/mcp/tools/{tool_name}",
             "health_live": "/health/live",
             "health_ready": "/health/ready"
@@ -431,10 +431,10 @@ async def root():
             "embedding_model": "granite-embedding-125m"
         },
         "documentation": {
-            "mcp_protocol": "Connect to /mcp/sse to discover tools via Server-Sent Events",
+            "mcp_protocol": "Connect to /sse to discover tools via Server-Sent Events",
             "tool_execution": "POST to /mcp/tools/{tool_name} to execute RAG operations",
             "example": {
-                "discover_tools": "curl -N http://rag-server:8080/mcp/sse",
+                "discover_tools": "curl -N http://rag-server:8080/sse",
                 "retrieve_user": "curl -X POST http://rag-server:8080/mcp/tools/retrieve_user_info -d '{\"user_id\": \"...\", \"query\": \"...\"}'",
                 "similar_claims": "curl -X POST http://rag-server:8080/mcp/tools/retrieve_similar_claims -d '{\"claim_text\": \"...\"}'"
             }
@@ -460,7 +460,7 @@ if __name__ == "__main__":
 
     port = int(os.getenv("PORT", "8080"))
     logger.info(f"Starting MCP RAG Server on port {port}")
-    logger.info(f"MCP SSE endpoint: http://0.0.0.0:{port}/mcp/sse")
+    logger.info(f"MCP SSE endpoint: http://0.0.0.0:{port}/sse")
     logger.info(f"Tools available: {[t['function']['name'] for t in MCP_TOOLS]}")
 
     uvicorn.run(
