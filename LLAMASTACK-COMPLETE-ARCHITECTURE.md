@@ -186,7 +186,9 @@ Basé sur l'audit du cluster existant et la documentation Red Hat OpenShift AI 3
 
 #### 2.2 Safety Providers
 
-**Configuration à ajouter:**
+**Option 1: Inline Providers (Llama Guard / Prompt Guard)**
+
+Requires deploying guard models as InferenceServices:
 
 ```yaml
 providers:
@@ -203,7 +205,7 @@ providers:
         model: meta-llama/Prompt-Guard-86M
 ```
 
-**Shields à enregistrer:**
+**Shields:**
 
 ```yaml
 shields:
@@ -224,6 +226,71 @@ shields:
 - Regulated/Controlled Substances
 - Self-Harm
 - Privacy violations
+
+**Option 2: TrustyAI Guardrails Orchestrator (Remote Provider) - RECOMMENDED**
+
+TrustyAI provides comprehensive guardrails with built-in detectors via the Guardrails Orchestrator:
+
+```yaml
+providers:
+  safety:
+    - provider_id: trustyai-guardrails
+      provider_type: remote::trustyai_guardrails
+      config:
+        url: http://claims-guardrails-orchestrator.claims-demo.svc.cluster.local:8033
+
+        # Pre-inference detectors (input filtering)
+        input_detectors:
+          - hap              # Hate, Abuse, Profanity
+          - jailbreak        # Jailbreak attempt detection
+          - pii              # Personally Identifiable Information
+          - gibberish        # Nonsensical text
+          - regex_language   # Language filtering
+
+        # Post-inference detectors (output filtering)
+        output_detectors:
+          - hap              # Hate, Abuse, Profanity
+          - toxicity         # Toxic content
+          - pii              # PII leakage
+
+        # Behavior on detection
+        on_detection:
+          block: true
+          log: true
+          return_error: true
+```
+
+**Shields:**
+
+```yaml
+shields:
+  # Input shield (pre-inference)
+  - shield_id: trustyai-input-shield
+    provider_id: trustyai-guardrails
+    shield_type: trustyai_input
+    params:
+      detectors: [hap, jailbreak, pii, gibberish]
+
+  # Output shield (post-inference)
+  - shield_id: trustyai-output-shield
+    provider_id: trustyai-guardrails
+    shield_type: trustyai_output
+    params:
+      detectors: [hap, toxicity, pii]
+```
+
+**Benefits of TrustyAI Guardrails:**
+- Built-in detectors (HAP, PII, jailbreak, toxicity, gibberish)
+- Custom detector support (fraud detection for claims)
+- Span-aware processing (chunk-based filtering)
+- Pre and post-inference filtering
+- FMS Guardrails Orchestrator (open source)
+- OpenShift AI 3.0 native integration (GuardrailsOrchestrator CRD)
+- Garak red teaming support
+- No model deployment required (detector-based, not LLM-based)
+
+**Deployment:**
+See `TRUSTYAI-GUARDRAILS-GUIDE.md` for complete setup instructions
 
 #### 2.3 Agents Provider
 
@@ -350,7 +417,7 @@ scoring_fns:
 
 #### 2.7 Eval Provider
 
-**À configurer:**
+**Option 1: Inline Provider (meta-reference)**
 
 ```yaml
 providers:
@@ -362,6 +429,32 @@ providers:
           type: sqlite
           db_path: /opt/app-root/src/.llama/distributions/rh/eval_store.db
 ```
+
+**Option 2: TrustyAI LMEval (Remote Provider) - RECOMMENDED**
+
+TrustyAI provides a comprehensive LM Evaluation Harness integration as an external provider:
+
+```yaml
+providers:
+  eval:
+    - provider_id: trustyai-lmeval
+      provider_type: remote::trustyai_lmeval
+      config:
+        url: http://trustyai-lmeval.claims-demo.svc.cluster.local:8080
+        vllm_url: http://llama-instruct-32-3b-predictor.llama-instruct-32-3b-demo.svc.cluster.local:80/v1/completions
+        namespace: claims-demo
+        tls_enabled: false
+```
+
+**Benefits of TrustyAI LMEval:**
+- 60+ standard benchmarks (MMLU, HellaSwag, ARC, TruthfulQA, etc.)
+- Custom evaluation task support
+- Multiple metrics (accuracy, perplexity, BLEU, ROUGE, F1)
+- Built on EleutherAI's LM Evaluation Harness
+- External service (doesn't require agents/safety dependencies)
+
+**Deployment:**
+See `TRUSTYAI-EVALUATION-GUIDE.md` for complete setup instructions.
 
 **Benchmarks disponibles:**
 
