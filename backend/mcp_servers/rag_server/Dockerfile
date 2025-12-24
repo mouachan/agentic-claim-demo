@@ -13,9 +13,10 @@ COPY prompts.py .
 COPY server.py .
 COPY mcp_server.py .
 
-# Create non-root user
+# Create non-root user and fix permissions
 RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app && \
+    chmod -R 755 /app
 
 USER appuser
 
