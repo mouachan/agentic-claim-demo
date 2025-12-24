@@ -1,12 +1,8 @@
-# MCP RAG Server Dockerfile - Lightweight (uses gemma-300m for embeddings)
+# MCP RAG Server Dockerfile - Centralized via LlamaStack
+# No direct DB access - everything via LlamaStack APIs
 FROM python:3.11-slim
 
 WORKDIR /app
-
-# Install PostgreSQL client
-RUN apt-get update && apt-get install -y \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
 COPY requirements.txt .
