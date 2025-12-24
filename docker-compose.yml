@@ -1,0 +1,160 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector
+  postgresql:
+    image: pgvector/pgvector:pg16
+    container_name: claims-postgres
+    environment:
+      POSTGRES_DB: claims_db
+      POSTGRES_USER: claims_user
+      POSTGRES_PASSWORD: claims_pass
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./database/seed_data:/docker-entrypoint-initdb.d/seed_data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claims_user -d claims_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - claims-network
+
+  # Backend FastAPI
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: claims-backend
+    environment:
+      DEBUG: "true"
+      ENVIRONMENT: development
+      POSTGRES_HOST: postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: claims_db
+      POSTGRES_USER: claims_user
+      POSTGRES_PASSWORD: claims_pass
+      # Ollama sur macOS : host.docker.internal permet d'accéder à localhost
+      # LlamaStack en prod OpenShift : URL du service
+      LLAMASTACK_ENDPOINT: ${LLAMASTACK_ENDPOINT:-http://host.docker.internal:11434}
+      OCR_SERVER_URL: http://ocr-server:8080
+      RAG_SERVER_URL: http://rag-server:8080
+      ORCHESTRATOR_SERVER_URL: http://orchestrator-server:8080
+      GUARDRAILS_SERVER_URL: http://guardrails-server:8080
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app
+      - ./documents:/mnt/documents
+    networks:
+      - claims-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # MCP OCR Server
+  ocr-server:
+    build:
+      context: ./backend/mcp_servers/ocr_server
+      dockerfile: Dockerfile
+    container_name: claims-ocr-server
+    environment:
+      LOG_LEVEL: INFO
+      LLAMASTACK_ENDPOINT: ${LLAMASTACK_ENDPOINT:-http://host.docker.internal:11434}
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./documents:/mnt/documents:ro
+    networks:
+      - claims-network
+    # Note: Implémentation du serveur à créer
+
+  # MCP RAG Server
+  rag-server:
+    build:
+      context: ./backend/mcp_servers/rag_server
+      dockerfile: Dockerfile
+    container_name: claims-rag-server
+    environment:
+      POSTGRES_HOST: postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: claims_db
+      POSTGRES_USER: claims_user
+      POSTGRES_PASSWORD: claims_pass
+      LLAMASTACK_ENDPOINT: ${LLAMASTACK_ENDPOINT:-http://host.docker.internal:11434}
+      VECTOR_DIMENSION: 768
+      LOG_LEVEL: INFO
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    networks:
+      - claims-network
+    # Note: Implémentation du serveur à créer
+
+  # MCP Orchestrator Server
+  orchestrator-server:
+    build:
+      context: ./backend/mcp_servers/orchestrator_server
+      dockerfile: Dockerfile
+    container_name: claims-orchestrator-server
+    environment:
+      POSTGRES_HOST: postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: claims_db
+      POSTGRES_USER: claims_user
+      POSTGRES_PASSWORD: claims_pass
+      OCR_SERVER_URL: http://ocr-server:8080
+      RAG_SERVER_URL: http://rag-server:8080
+      GUARDRAILS_SERVER_URL: http://guardrails-server:8080
+      LLAMASTACK_ENDPOINT: ${LLAMASTACK_ENDPOINT:-http://host.docker.internal:11434}
+      LOG_LEVEL: INFO
+    ports:
+      - "8083:8080"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      ocr-server:
+        condition: service_started
+      rag-server:
+        condition: service_started
+    networks:
+      - claims-network
+    # Note: Implémentation du serveur à créer
+
+  # Frontend React
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: claims-frontend
+    environment:
+      # Le navigateur appelle directement le backend sur localhost:8000
+      # (pas besoin de proxy Vite car le port backend est mappé)
+      VITE_API_URL: http://localhost:8000/api/v1
+    ports:
+      - "3000:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/package.json:/app/package.json:ro
+      - ./frontend/index.html:/app/index.html:ro
+      - ./frontend/vite.config.ts:/app/vite.config.ts:ro
+    networks:
+      - claims-network
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  claims-network:
+    driver: bridge

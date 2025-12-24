@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ocr-server
+  namespace: claims-demo
+  labels:
+    app: ocr-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ocr-server
+  template:
+    metadata:
+      labels:
+        app: ocr-server
+    spec:
+      initContainers:
+      - name: install-deps
+        image: registry.access.redhat.com/ubi9/python-311:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          pip install --no-cache-dir --target=/deps \
+            fastapi uvicorn httpx python-multipart pydantic pillow pytesseract pdf2image
+        volumeMounts:
+        - name: deps
+          mountPath: /deps
+      containers:
+      - name: ocr-server
+        image: registry.access.redhat.com/ubi9/python-311:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          export PYTHONPATH=/deps:$PYTHONPATH && \
+          cd /app && python -m uvicorn server:app --host 0.0.0.0 --port 8080
+        workingDir: /app
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        env:
+        - name: LLAMASTACK_ENDPOINT
+          value: "http://claims-llamastack-service.claims-demo.svc.cluster.local:8321"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        - name: deps
+          mountPath: /deps
+        - name: claim-documents
+          mountPath: /claim_documents
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 5
+      volumes:
+      - name: code
+        configMap:
+          name: ocr-server-code
+      - name: deps
+        emptyDir: {}
+      - name: claim-documents
+        persistentVolumeClaim:
+          claimName: claim-documents

@@ -1,0 +1,10 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: ocr-server
+  namespace: claims-demo
+  labels:
+    app: ocr-server
+spec:
+  lookupPolicy:
+    local: true

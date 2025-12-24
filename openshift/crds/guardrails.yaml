@@ -1,0 +1,114 @@
+apiVersion: trustyai.opendatahub.io/v1
+kind: Guardrails
+metadata:
+  name: claims-guardrails
+  namespace: claims-demo
+  labels:
+    app: claims-processing
+    component: guardrails
+spec:
+  type: content-safety
+  description: "PII detection and sensitive data validation for claims processing"
+
+  # Reference to LlamaStack for LLM-based validation
+  llamaStackRef: claims-llamastack
+
+  # Detection rules
+  rules:
+    # PII Detection Rules
+    - name: ssn-detection
+      type: pattern
+      pattern: '\b\d{3}-\d{2}-\d{4}\b'
+      action: redact
+      severity: high
+      description: "Detect and redact Social Security Numbers"
+
+    - name: credit-card-detection
+      type: pattern
+      pattern: '\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b'
+      action: redact
+      severity: high
+      description: "Detect and redact credit card numbers"
+
+    - name: email-detection
+      type: pattern
+      pattern: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+      action: flag
+      severity: medium
+      description: "Detect email addresses"
+
+    - name: phone-detection
+      type: pattern
+      pattern: '\b\d{3}[-.]?\d{3}[-.]?\d{4}\b'
+      action: flag
+      severity: medium
+      description: "Detect phone numbers"
+
+    - name: address-detection
+      type: pattern
+      pattern: '\b\d+\s+[A-Za-z\s]+,\s*[A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5}\b'
+      action: flag
+      severity: low
+      description: "Detect physical addresses"
+
+    # LLM-based contextual detection
+    - name: llm-pii-validation
+      type: llm
+      enabled: true
+      severity: high
+      description: "Use LLM to detect contextual PII that regex might miss"
+      prompt: |
+        Analyze the following text and identify any personal identifiable information (PII)
+        that should be protected. Look for:
+        - Names combined with sensitive information
+        - Health information
+        - Financial details
+        - Government ID numbers
+        - Biometric data
+
+        Return a JSON object with:
+        {
+          "has_pii": boolean,
+          "pii_types": [list of PII types found],
+          "sensitive_spans": [list of text spans containing PII],
+          "risk_level": "low" | "medium" | "high"
+        }
+
+        Text to analyze: {text}
+
+  # Actions configuration
+  actions:
+    redact:
+      replacement: "[REDACTED]"
+      logOriginal: false  # Never log original values
+
+    flag:
+      notifyUser: true
+      logEvent: true
+
+    block:
+      enabled: false  # Don't block entirely, just flag
+
+  # Monitoring and alerting
+  monitoring:
+    enabled: true
+    metrics:
+      - pii_detections_total
+      - guardrails_violations_total
+      - processing_latency_seconds
+
+  # Performance settings
+  performance:
+    batchSize: 10
+    timeout: 30s
+    cacheResults: true
+    cacheTTL: 1h
+
+  # Resource allocation
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi

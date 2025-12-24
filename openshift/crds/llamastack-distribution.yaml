@@ -1,0 +1,54 @@
+---
+# LlamaStackDistribution - OpenShift AI 3.0 conforme
+# Based on working cluster configuration
+apiVersion: llamastack.io/v1alpha1
+kind: LlamaStackDistribution
+metadata:
+  name: claims-llamastack
+  namespace: claims-demo
+  labels:
+    app: claims-processing
+    component: llama-stack
+    opendatahub.io/dashboard: "true"
+spec:
+  replicas: 1
+
+  server:
+    containerSpec:
+      name: llama-stack
+      port: 8321
+      command:
+      - /bin/sh
+      - -c
+      - llama stack run /etc/llama-stack/run.yaml
+
+      # Variables d'environnement
+      env:
+        - name: VLLM_TLS_VERIFY
+          value: "false"
+        - name: MILVUS_DB_PATH
+          value: ~/.llama/milvus.db
+        - name: VLLM_MAX_TOKENS
+          value: "16384"
+        - name: VLLM_API_TOKEN_1
+          value: "fake"
+        - name: VLLM_API_TOKEN_2
+          value: "fake"
+        - name: LLAMA_STACK_CONFIG_DIR
+          value: /opt/app-root/src/.llama/distributions/rh/
+
+      resources:
+        requests:
+          cpu: 250m
+          memory: 500Mi
+        limits:
+          cpu: "2"
+          memory: 12Gi
+
+    # Utiliser la distribution rh-dev (résolu par l'opérateur)
+    distribution:
+      name: rh-dev
+
+    # Référence au ConfigMap avec la configuration complète
+    userConfig:
+      configMapName: llama-stack-config
