@@ -6,35 +6,82 @@ An intelligent insurance claims processing system powered by AI agents, demonstr
 
 This demo showcases an end-to-end agentic workflow for insurance claims processing using OpenShift AI and LlamaStack.
 
-### System Components
+### System Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Frontend (React)                      │
-│              Claims Submission Interface                 │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-                   ↓ HTTP/REST API
-┌─────────────────────────────────────────────────────────┐
-│              Backend API (FastAPI)                       │
-│           LlamaStack ReActAgent Integration              │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-        ┌──────────┼──────────┐
-        ↓          ↓          ↓
-    ┌───────┐  ┌──────┐  ┌──────────┐
-    │  OCR  │  │Guard │  │   RAG    │
-    │  MCP  │  │rails │  │Retrieval │
-    │Server │  │ MCP  │  │   MCP    │
-    └───┬───┘  └──┬───┘  └────┬─────┘
-        │         │            │
-        └─────────┼────────────┘
-                  ↓
-        ┌──────────────────┐
-        │  PostgreSQL +    │
-        │    pgvector      │
-        │  (Claims + RAG)  │
-        └──────────────────┘
+```mermaid
+graph TB
+    subgraph "User Layer"
+        U[👤 User Browser]
+    end
+
+    subgraph "OpenShift Cluster"
+        subgraph "Application Layer - Namespace: claims-demo"
+            F[📱 Frontend<br/>React + TypeScript<br/>Route/Service]
+            B[⚙️ Backend API<br/>FastAPI + ReActAgent<br/>Route/Service]
+        end
+
+        subgraph "OpenShift AI 3.0 - AI Services"
+            subgraph "LlamaStack Distribution"
+                LS[🧠 LlamaStack Server<br/>ReActAgent Runtime<br/>Service: claims-llamastack:8321]
+            end
+
+            subgraph "AI Models - InferenceServices"
+                LLM["🦙 Llama 3.2 3B Instruct<br/>vLLM (2x L40 GPUs)<br/>Context: 32K tokens<br/>Service: llama-instruct-32-3b"]
+                QWEN["👁️ Qwen-VL 7B<br/>Vision-Language Model<br/>1x L40 GPU<br/>Service: qwen-vl-7b"]
+            end
+
+            subgraph "TrustyAI Guardrails"
+                LG["🛡️ Llama Guard 3 1B<br/>Content Safety"]
+                GG["🛡️ Granite Guardian 3.1 2B<br/>PII Detection"]
+            end
+        end
+
+        subgraph "MCP Servers - Namespace: claims-demo"
+            OCR["📄 OCR MCP Server<br/>Document Processing<br/>Service: ocr-server:8080"]
+            RAG["🔍 RAG MCP Server<br/>Vector Retrieval<br/>Service: rag-server:8080"]
+        end
+
+        subgraph "Data Layer - Namespace: claims-demo"
+            DB[(🗄️ PostgreSQL + pgvector<br/>Claims + Embeddings<br/>StatefulSet + PVC)]
+        end
+    end
+
+    %% User connections
+    U -->|HTTPS| F
+    F -->|REST API| B
+
+    %% Backend to LlamaStack
+    B -->|Agent API| LS
+
+    %% LlamaStack to Models
+    LS -->|Inference| LLM
+    LS -->|MCP Protocol SSE| OCR
+    LS -->|MCP Protocol SSE| RAG
+    LS -.->|Optional Safety| LG
+    LS -.->|Optional PII Check| GG
+
+    %% MCP Servers to AI Models
+    OCR -->|Vision OCR| QWEN
+    OCR -->|Text Validation| LLM
+
+    %% MCP Servers to Data
+    RAG -->|Vector Search| DB
+    OCR -.->|Store Results| DB
+
+    %% Backend to Data
+    B -->|CRUD Operations| DB
+
+    style U fill:#e1f5ff
+    style F fill:#fff4e6
+    style B fill:#ffe6f0
+    style LS fill:#f3e5f5
+    style LLM fill:#e8f5e9
+    style QWEN fill:#e8f5e9
+    style LG fill:#fff9c4
+    style GG fill:#fff9c4
+    style OCR fill:#e3f2fd
+    style RAG fill:#e3f2fd
+    style DB fill:#fce4ec
 ```
 
 ### Key Technologies
