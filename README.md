@@ -42,7 +42,12 @@ This demo showcases an end-to-end agentic workflow for insurance claims processi
 - **Frontend**: React with TypeScript
 - **Backend**: Python FastAPI
 - **AI Orchestration**: LlamaStack with ReActAgent (Reasoning + Acting)
-- **LLM**: Llama 3.2 3B (vLLM inference, 2 GPUs, 32K context)
+- **AI Models**:
+  - **Primary LLM**: Llama 3.2 3B Instruct (vLLM inference, 2 GPUs, 32K context)
+  - **OCR Vision**: Qwen-VL 7B (multimodal vision-language model)
+  - **Guardrails**:
+    - Llama Guard 3 1B (content safety detection)
+    - Granite Guardian 3.1 2B (HAP, PII detection)
 - **MCP Protocol**: Model Context Protocol for tool integration
 - **Database**: PostgreSQL with pgvector extension
 - **Platform**: Red Hat OpenShift AI 3.0
@@ -50,10 +55,11 @@ This demo showcases an end-to-end agentic workflow for insurance claims processi
 ## Features
 
 ### 1. Document Processing (OCR MCP Server)
+- **Vision Model**: Qwen-VL 7B multimodal vision-language model
 - Automated text extraction from claim documents (PDF, images)
 - Multi-format support: PDF, JPG, PNG, TIFF
 - Structured data extraction with confidence scores
-- LLM-based validation and cleanup
+- Intelligent document understanding and layout analysis
 
 ### 2. Policy Retrieval (RAG MCP Server)
 - Vector similarity search for user contracts
@@ -248,19 +254,23 @@ oc wait --for=condition=ready pod -l serving.kserve.io/inferenceservice=llama-in
 oc logs -l serving.kserve.io/inferenceservice=llama-instruct-32-3b --tail=50
 ```
 
-#### Step 4: Deploy TrustAI Guardrails
+#### Step 4: Deploy TrustyAI Guardrails
 
-**4.1 Deploy Guardrails Models (Optional - for PII detection)**
+**4.1 Deploy Guardrails Models (Optional - for PII detection and content safety)**
 ```bash
-# Deploy detector model for PII classification
+# Deploy Llama Guard 3 1B - Content safety detection
 oc apply -f openshift/guardrails/detector-inferenceservice.yaml
 
-# Deploy Granite Guardian for content validation
+# Deploy Granite Guardian 3.1 2B - HAP and PII detection
 oc apply -f openshift/guardrails/granite-guardian-inferenceservice.yaml
 
-# Deploy Llama Guard for safety checks
+# Deploy Llama Guard detector (alternative safety model)
 oc apply -f openshift/guardrails/llama-guard-inferenceservice.yaml
 ```
+
+**Note**: These models provide multi-layered protection:
+- **Llama Guard 3 1B**: Detects unsafe content, hate speech, violence
+- **Granite Guardian 3.1 2B**: IBM model for PII detection (SSN, credit cards, emails)
 
 **4.2 Deploy Guardrails Configuration**
 ```bash
@@ -305,6 +315,15 @@ oc exec -it $(oc get pod -l app=llama-stack -o name | head -1) -- \
 ```
 
 #### Step 6: Deploy MCP Servers
+
+**Prerequisites**: Ensure Qwen-VL 7B model is deployed for OCR
+```bash
+# If not already deployed, the OCR server expects Qwen-VL at:
+# http://qwen-vl-7b-predictor.multimodal-demo.svc.cluster.local:80/v1
+
+# Verify Qwen-VL is accessible (or deploy it to your namespace)
+oc get inferenceservice qwen-vl-7b -n multimodal-demo
+```
 
 **6.1 Deploy OCR Server**
 ```bash
