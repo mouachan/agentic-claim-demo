@@ -139,43 +139,263 @@ The deployment uses OpenShift AI Custom Resource Definitions (CRDs):
 - **Guardrails**: Configures safety and validation rules
 - **InferenceService**: Manages vLLM model serving
 
-### Quick Start
+### Step-by-Step Deployment Guide
 
-1. **Deploy Database**:
+#### Step 1: Build Container Images
+
+Before deploying, build container images for all components:
+
+**1.1 Build MCP Servers**
 ```bash
-oc apply -f backend/openshift/deployments/postgresql-statefulset.yaml
-oc apply -f backend/openshift/services/postgresql-service.yaml
+# Build OCR Server
+cd backend/mcp_servers/ocr_server
+podman build -t quay.io/your-org/ocr-server:latest .
+podman push quay.io/your-org/ocr-server:latest
+
+# Build RAG Server
+cd ../rag_server
+podman build -t quay.io/your-org/rag-server:latest .
+podman push quay.io/your-org/rag-server:latest
 ```
 
-2. **Deploy MCP Servers**:
+**1.2 Build Backend API**
 ```bash
-oc apply -f backend/openshift/deployments/ocr-server-deployment.yaml
-oc apply -f backend/openshift/deployments/rag-server-deployment.yaml
-oc apply -f backend/openshift/services/
+cd ../../..
+podman build -t quay.io/your-org/claims-backend:latest -f backend/Dockerfile .
+podman push quay.io/your-org/claims-backend:latest
 ```
 
-3. **Deploy LlamaStack**:
+**1.3 Build Frontend**
 ```bash
-oc apply -f backend/openshift/configmaps/llama-stack-config.yaml
-oc apply -f backend/openshift/deployments/llamastack-deployment.yaml
+cd frontend
+podman build -t quay.io/your-org/claims-frontend:latest .
+podman push quay.io/your-org/claims-frontend:latest
 ```
 
-4. **Deploy vLLM Model**:
+**Alternative: Use OpenShift BuildConfigs**
 ```bash
-oc apply -f backend/openshift/vllm/llama-3.2-3b-inferenceservice.yaml
+# Create ImageStreams
+oc apply -f openshift/imagestreams/
+
+# Create BuildConfigs (builds from source)
+oc apply -f openshift/buildconfigs/
+
+# Trigger builds
+oc start-build ocr-server
+oc start-build rag-server
+oc start-build backend
+oc start-build frontend
 ```
 
-5. **Deploy Backend**:
+#### Step 2: Deploy Database
+
+**2.1 Create PostgreSQL Secret**
 ```bash
-oc apply -f backend/openshift/configmaps/backend-config.yaml
-oc apply -f backend/openshift/deployments/backend-deployment.yaml
-oc apply -f backend/openshift/routes/backend-route.yaml
+oc create secret generic postgresql-secret \
+  --from-literal=POSTGRES_USER=claims_user \
+  --from-literal=POSTGRES_PASSWORD=<strong-password> \
+  -n claims-demo
 ```
 
-6. **Deploy Frontend**:
+**2.2 Deploy PostgreSQL + pgvector**
 ```bash
-oc apply -f frontend/openshift/deployments/frontend-deployment.yaml
-oc apply -f frontend/openshift/routes/frontend-route.yaml
+oc apply -f openshift/pvcs/postgresql-pvc.yaml
+oc apply -f openshift/deployments/postgresql-statefulset.yaml
+oc apply -f openshift/services/postgresql-service.yaml
+```
+
+**2.3 Wait for PostgreSQL to be ready**
+```bash
+oc wait --for=condition=ready pod -l app=postgresql --timeout=300s
+```
+
+**2.4 Initialize Database Schema**
+```bash
+# Copy init.sql to pod
+oc cp database/init.sql postgresql-0:/tmp/init.sql
+
+# Execute schema creation
+oc exec postgresql-0 -- psql -U claims_user -d claims_db -f /tmp/init.sql
+```
+
+**2.5 Seed Test Data**
+```bash
+# Copy seed data
+oc cp database/seed_data/001_sample_data.sql postgresql-0:/tmp/seed.sql
+
+# Execute seed script
+oc exec postgresql-0 -- psql -U claims_user -d claims_db -f /tmp/seed.sql
+
+# Verify data
+oc exec postgresql-0 -- psql -U claims_user -d claims_db -c "SELECT COUNT(*) FROM users;"
+oc exec postgresql-0 -- psql -U claims_user -d claims_db -c "SELECT COUNT(*) FROM claims;"
+```
+
+#### Step 3: Deploy vLLM Inference Model
+
+**3.1 Deploy Llama 3.2 3B with vLLM (2 GPUs, 32K context)**
+```bash
+oc apply -f openshift/llama-32-3b-instruct/llama-3.2-3b-inferenceservice.yaml
+```
+
+**3.2 Wait for model to load**
+```bash
+oc wait --for=condition=ready pod -l serving.kserve.io/inferenceservice=llama-instruct-32-3b --timeout=600s
+```
+
+**3.3 Verify vLLM health**
+```bash
+oc logs -l serving.kserve.io/inferenceservice=llama-instruct-32-3b --tail=50
+```
+
+#### Step 4: Deploy TrustAI Guardrails
+
+**4.1 Deploy Guardrails Models (Optional - for PII detection)**
+```bash
+# Deploy detector model for PII classification
+oc apply -f openshift/guardrails/detector-inferenceservice.yaml
+
+# Deploy Granite Guardian for content validation
+oc apply -f openshift/guardrails/granite-guardian-inferenceservice.yaml
+
+# Deploy Llama Guard for safety checks
+oc apply -f openshift/guardrails/llama-guard-inferenceservice.yaml
+```
+
+**4.2 Deploy Guardrails Configuration**
+```bash
+# Configure guardrails rules
+oc apply -f openshift/guardrails/guardrails-config.yaml
+
+# Deploy guardrails orchestrator
+oc apply -f openshift/guardrails/guardrails-orchestrator.yaml
+```
+
+**4.3 Verify Guardrails**
+```bash
+oc get pods -l app=guardrails
+oc logs -l app=guardrails-orchestrator --tail=20
+```
+
+#### Step 5: Deploy LlamaStack
+
+**5.1 Create LlamaStack ConfigMap**
+```bash
+oc apply -f openshift/configmaps/llama-stack-config.yaml
+```
+
+**5.2 Deploy LlamaStack (managed by OpenShift AI Operator)**
+```bash
+# LlamaStack is deployed via LlamaStackDistribution CRD
+# Verify existing deployment
+oc get llamastackdistribution claims-llamastack
+
+# Check service endpoint
+oc get svc claims-llamastack-service
+```
+
+**5.3 Verify MCP Tools Configuration**
+```bash
+# Check LlamaStack logs for MCP server registration
+oc logs -l app=llama-stack --tail=50 | grep -i mcp
+
+# Verify toolgroups
+oc exec -it $(oc get pod -l app=llama-stack -o name | head -1) -- \
+  curl -s http://localhost:8321/v1/tool_groups
+```
+
+#### Step 6: Deploy MCP Servers
+
+**6.1 Deploy OCR Server**
+```bash
+oc apply -f openshift/deployments/ocr-server-deployment.yaml
+oc apply -f openshift/services/ocr-service.yaml
+```
+
+**6.2 Deploy RAG Server**
+```bash
+oc apply -f openshift/deployments/rag-server-deployment.yaml
+oc apply -f openshift/services/rag-service.yaml
+```
+
+**6.3 Verify MCP Servers**
+```bash
+oc get pods -l component=mcp-server
+oc logs -l app=ocr-server --tail=20
+oc logs -l app=rag-server --tail=20
+```
+
+#### Step 7: Deploy Backend API
+
+**7.1 Create Backend ConfigMaps**
+```bash
+oc apply -f openshift/configmaps/backend-config.yaml
+oc apply -f openshift/configmaps/prompts-config.yaml
+```
+
+**7.2 Deploy Backend**
+```bash
+oc apply -f openshift/deployments/backend-deployment.yaml
+oc apply -f openshift/services/backend-service.yaml
+oc apply -f openshift/routes/backend-route.yaml
+```
+
+**7.3 Verify Backend**
+```bash
+oc get pods -l app=backend
+oc logs -l app=backend --tail=50
+
+# Test health endpoint
+BACKEND_URL=$(oc get route backend -o jsonpath='{.spec.host}')
+curl http://$BACKEND_URL/health
+```
+
+#### Step 8: Deploy Frontend
+
+**8.1 Deploy Frontend**
+```bash
+oc apply -f openshift/deployments/frontend-deployment.yaml
+oc apply -f openshift/services/frontend-service.yaml
+oc apply -f openshift/routes/frontend-route.yaml
+```
+
+**8.2 Get Frontend URL**
+```bash
+FRONTEND_URL=$(oc get route frontend -o jsonpath='{.spec.host}')
+echo "Access the application at: http://$FRONTEND_URL"
+```
+
+#### Step 9: Test End-to-End Workflow
+
+**9.1 Access the Frontend**
+```bash
+# Open browser to frontend URL
+echo "Application URL: http://$(oc get route frontend -o jsonpath='{.spec.host}')"
+```
+
+**9.2 Test Claims Processing via API**
+```bash
+# Get a sample claim ID from database
+CLAIM_ID=$(oc exec postgresql-0 -- psql -U claims_user -d claims_db -t -c \
+  "SELECT id FROM claims WHERE status='pending' LIMIT 1;")
+
+# Process claim via API
+BACKEND_URL=$(oc get route backend -o jsonpath='{.spec.host}')
+curl -X POST "http://$BACKEND_URL/api/v1/claims/${CLAIM_ID}/process" \
+  -H "Content-Type: application/json" \
+  -d '{"skip_ocr": false, "enable_rag": true}'
+
+# Check processing status
+curl "http://$BACKEND_URL/api/v1/claims/${CLAIM_ID}/status"
+```
+
+**9.3 Monitor Processing**
+```bash
+# Watch backend logs
+oc logs -f -l app=backend
+
+# Watch LlamaStack logs for ReActAgent activity
+oc logs -f -l app=llama-stack | grep -i "thought\|action\|observation"
 ```
 
 ### Configuration
