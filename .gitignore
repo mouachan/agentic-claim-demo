@@ -81,10 +81,23 @@ QUICKSTART.md
 TESTING_GUIDE.md
 test_workflow.sh
 LOCAL_NOTES.md
+TODO-NEXT-SESSION.md
+FIXES-2025-12-24.md
+TRUSTYAI-EVALUATION-GUIDE.md
+TRUSTYAI-GUARDRAILS-GUIDE.md
+MCP-CLEANUP-ANALYSIS.md
+MIGRATION-TO-LLAMASTACK-ARCHITECTURE.md
+LLAMASTACK-COMPLETE-ARCHITECTURE.md
 
 # Build artifacts
 BUILD.md
 deploy.sh
+
+# Documentation READMEs (local only)
+backend/mcp_servers/*/README.md
+docs/*.md
+openshift/llama-32-3b-instruct/README.md
+openshift/README-OPENSHIFT-AI.md
 
 # Temporary files
 *.tmp
