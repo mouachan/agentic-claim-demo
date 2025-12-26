@@ -125,18 +125,21 @@ async def process_claim(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Start processing a claim using LlamaStack Agents API.
+    Start processing a claim using LlamaStack ReAct Agent.
 
-    The agent will automatically:
-    - Extract data from the document using OCR
-    - Retrieve user contracts and coverage
-    - Find similar historical claims
-    - Search policy knowledge base
-    - Make a final decision with reasoning
+    The ReActAgent uses a Thought-Action-Observation loop to:
+    - Reason about the next step (Thought)
+    - Execute a tool if necessary (Action)
+    - Observe the result (Observation)
+    - Repeat until reaching the final answer
     """
     import time
     import json
-    from app.llamastack import client as llama_client
+    from llama_stack_client import LlamaStackClient
+    from llama_stack_client.lib.agents.react.agent import ReActAgent
+    from llama_stack_client.lib.agents.react.tool_parser import ReActOutput
+    from llama_stack_client.lib.agents.event_logger import EventLogger
+    import llama_stack_client
     from app.llamastack.prompts import CLAIMS_PROCESSING_AGENT_INSTRUCTIONS
 
     try:
@@ -153,28 +156,37 @@ async def process_claim(
         await db.commit()
 
         # Get LlamaStack client
-        llamastack = llama_client.get_llamastack_client()
+        client = LlamaStackClient(base_url=settings.llamastack_endpoint)
 
         # Track processing start time
         start_time = time.time()
 
         try:
-            # Create agent session
-            agent_config = {
-                "model": settings.llamastack_default_model,  # llama-instruct-32-3b
-                "toolgroups": ["claims-processing"],  # All 4 tools
-                "instructions": CLAIMS_PROCESSING_AGENT_INSTRUCTIONS,
-                "enable_auto_tool_choice": True,
-                "tool_choice": "auto",
-            }
+            # Build tools list with MCP server format (required by Responses API)
+            tools = []
+            if not process_request.skip_ocr:
+                tools.append({
+                    "type": "mcp",
+                    "server_label": "ocr-server",
+                    "server_url": "http://ocr-server.claims-demo.svc.cluster.local:8080/sse"
+                })
+            if process_request.enable_rag:
+                tools.append({
+                    "type": "mcp",
+                    "server_label": "rag-server",
+                    "server_url": "http://rag-server.claims-demo.svc.cluster.local:8080/sse"
+                })
 
-            session_result = await llamastack.create_agent_session(
-                agent_config=agent_config,
-                session_name=f"claim_{claim_id}"
+            # Create ReActAgent
+            agent = ReActAgent(
+                client=client,
+                model=settings.llamastack_default_model,
+                tools=tools,
+                instructions=CLAIMS_PROCESSING_AGENT_INSTRUCTIONS,
             )
-            session_id = session_result["session_id"]
 
-            logger.info(f"Created agent session {session_id} for claim {claim_id}")
+            # Create session
+            session_id = agent.create_session(f"claim_{claim_id}")
 
             # Prepare user message for the agent
             user_message = f"""
@@ -197,44 +209,22 @@ Workflow configuration:
 - Enable RAG retrieval: {process_request.enable_rag}
 """
 
-            # Run agent turn - this will automatically call tools and orchestrate the workflow
-            turn_result = await llamastack.run_agent_turn(
+            # Run agent turn
+            response = agent.create_turn(
+                messages=[{"role": "user", "content": user_message}],
                 session_id=session_id,
-                messages=[{
-                    "role": "user",
-                    "content": user_message
-                }]
+                stream=False,
             )
 
-            # Extract tool calls and log them
-            if "messages" in turn_result:
-                for msg in turn_result["messages"]:
-                    # Log tool calls as processing steps
-                    if msg.get("role") == "tool" and msg.get("tool_calls"):
-                        for tool_call in msg["tool_calls"]:
-                            tool_name = tool_call.get("function", {}).get("name", "unknown")
-                            tool_output = tool_call.get("output", {})
+            # Parse response
+            final_content = None
+            for log in EventLogger().log(response):
+                if hasattr(log, 'role') and log.role == "assistant":
+                    final_content = str(log)
 
-                            # Create processing log
-                            log = models.ProcessingLog(
-                                claim_id=claim_id,
-                                step=tool_name,  # Will be mapped to enum
-                                agent_name=f"mcp::{tool_name}",
-                                status="completed",
-                                output_data=tool_output,
-                                started_at=claim.submitted_at,
-                                completed_at=time.time()
-                            )
-                            db.add(log)
+            final_response = final_content
 
-            # Extract final assistant response
-            final_response = None
-            for msg in reversed(turn_result.get("messages", [])):
-                if msg.get("role") == "assistant" and msg.get("content"):
-                    final_response = msg["content"]
-                    break
-
-            if not final_response:
+            if not final_response or final_response == "No response from agent":
                 raise ValueError("Agent did not provide a final response")
 
             # Parse the agent's decision (expecting JSON in the response)
@@ -284,7 +274,7 @@ Workflow configuration:
 
             await db.commit()
 
-            logger.info(f"Claim {claim_id} processed via Agents API: {recommendation}")
+            logger.info(f"Claim {claim_id} processed via ReAct Agent: {recommendation}")
             return schemas.ProcessClaimResponse(
                 claim_id=claim_id,
                 status=claim.status.value,
@@ -292,10 +282,26 @@ Workflow configuration:
                 processing_started_at=claim.submitted_at
             )
 
-        except llama_client.LlamaStackError as e:
+        except llama_stack_client.APIConnectionError as e:
             claim.status = models.ClaimStatus.failed
             await db.commit()
-            logger.error(f"LlamaStack Agents API error: {str(e)}")
+            logger.error(f"LlamaStack connection error: {str(e)}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Cannot connect to LlamaStack server: {str(e)}"
+            )
+        except llama_stack_client.APIStatusError as e:
+            claim.status = models.ClaimStatus.failed
+            await db.commit()
+            logger.error(f"LlamaStack API error: {e.status_code} - {str(e)}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"LlamaStack API error: {str(e)}"
+            )
+        except llama_stack_client.APIError as e:
+            claim.status = models.ClaimStatus.failed
+            await db.commit()
+            logger.error(f"LlamaStack error: {str(e)}")
             raise HTTPException(
                 status_code=503,
                 detail=f"Agent processing failed: {str(e)}"

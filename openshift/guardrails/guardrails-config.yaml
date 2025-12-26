@@ -1,0 +1,42 @@
+# GuardrailsOrchestrator Configuration ConfigMap for Claims Demo
+# Configures HAP and PII detection for claim processing
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: claims-guardrails-config
+  namespace: claims-demo
+  labels:
+    app: claims-processing
+    component: guardrails
+data:
+  config.yaml: |
+    # Chat generation service configuration
+    chat_generation:
+      service:
+        # LlamaStack inference endpoint
+        hostname: claims-llamastack-service.claims-demo.svc.cluster.local
+        port: 8321
+
+    # Detector configurations
+    detectors:
+      # HAP (Hate and Profanity) detector - using built-in detector sidecar
+      hap:
+        type: text_contents
+        service:
+          # Built-in TrustyAI detectors are on port 8080
+          hostname: claims-guardrails-service.claims-demo.svc.cluster.local
+          port: 8080
+        chunker_id: whole_doc_chunker
+        default_threshold: 0.5
+        enabled: true
+
+      # PII (Personally Identifiable Information) detector - using built-in detector sidecar
+      pii:
+        type: text_contents
+        service:
+          # Built-in TrustyAI detectors are on port 8080
+          hostname: claims-guardrails-service.claims-demo.svc.cluster.local
+          port: 8080
+        chunker_id: whole_doc_chunker
+        default_threshold: 0.7
+        enabled: true

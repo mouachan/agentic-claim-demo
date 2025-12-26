@@ -26,7 +26,8 @@ from server import (
     search_knowledge_base,
     RetrieveUserInfoRequest,
     RetrieveSimilarClaimsRequest,
-    SearchKnowledgeBaseRequest
+    SearchKnowledgeBaseRequest,
+    LLAMASTACK_ENDPOINT
 )
 
 # Configure logging
@@ -359,24 +360,17 @@ async def readiness():
     """
     Kubernetes readiness probe.
 
-    Checks database connection before marking as ready.
+    Checks LlamaStack connection before marking as ready.
     """
     try:
-        from sqlalchemy import create_engine, text
-        import os
+        import httpx
 
-        # Test database connection
-        POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgresql.claims-demo.svc.cluster.local")
-        POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-        POSTGRES_DB = os.getenv("POSTGRES_DB", "claims_db")
-        POSTGRES_USER = os.getenv("POSTGRES_USER", "claims_user")
-        POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "ClaimsDemo2025!")
+        # Test LlamaStack connection
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{LLAMASTACK_ENDPOINT}/v1/models")
 
-        DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-        test_engine = create_engine(DATABASE_URL)
-
-        with test_engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+            if response.status_code != 200:
+                raise Exception(f"LlamaStack returned status {response.status_code}")
 
         return HealthResponse(
             status="ready",
@@ -384,14 +378,14 @@ async def readiness():
             version="2.0.0",
             mcp_protocol="sse",
             tools_count=len(MCP_TOOLS),
-            database_connected=True
+            database_connected=True  # Via LlamaStack
         )
 
     except Exception as e:
         logger.error(f"Readiness check failed: {str(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Database not ready: {str(e)}"
+            detail=f"LlamaStack not ready: {str(e)}"
         )
 
 

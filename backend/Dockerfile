@@ -1,5 +1,6 @@
 # Backend FastAPI Dockerfile - OpenShift Compatible
-FROM registry.access.redhat.com/ubi9/python-311:latest
+# Using Python 3.12 for llama-stack-client 0.3.0+ compatibility
+FROM registry.access.redhat.com/ubi9/python-312:latest
 
 USER 0
 

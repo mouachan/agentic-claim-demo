@@ -47,9 +47,9 @@ class Settings(BaseSettings):
         )
 
     # LlamaStack (OpenShift AI)
-    llamastack_endpoint: str = "http://claims-llamastack.claims-demo.svc.cluster.local:8080"
+    llamastack_endpoint: str = "http://claims-llamastack-service.claims-demo.svc.cluster.local:8321"
     llamastack_api_key: Optional[str] = None
-    llamastack_default_model: str = "llama-3.1-8b-instruct"
+    llamastack_default_model: str = "vllm-inference-1/llama-instruct-32-3b"
     llamastack_embedding_model: str = "sentence-transformers/all-mpnet-base-v2"
     llamastack_embedding_dimension: int = 768
     llamastack_timeout: int = 300  # seconds

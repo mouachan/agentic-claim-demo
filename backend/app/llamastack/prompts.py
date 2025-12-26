@@ -1,10 +1,40 @@
 """
 LLM prompt templates for claims processing.
 Centralized prompts for consistency and easy modification.
+
+Prompts can be loaded from ConfigMaps mounted at /app/prompts/ or from default values.
 """
 
+import os
+from pathlib import Path
+
+# Prompt directory (can be mounted from ConfigMap)
+PROMPTS_DIR = Path(os.getenv("PROMPTS_DIR", "/app/prompts"))
+
+
+def load_prompt(filename: str, default: str) -> str:
+    """
+    Load a prompt from file or return default value.
+
+    Args:
+        filename: Name of the prompt file (e.g., "claims-processing-agent.txt")
+        default: Default prompt content if file doesn't exist
+
+    Returns:
+        Prompt content string
+    """
+    prompt_file = PROMPTS_DIR / filename
+    if prompt_file.exists():
+        try:
+            return prompt_file.read_text(encoding="utf-8")
+        except Exception as e:
+            print(f"Warning: Could not load prompt from {prompt_file}: {e}. Using default.")
+            return default
+    return default
+
+
 # OCR Validation Prompts
-OCR_VALIDATION_PROMPT = """
+_OCR_VALIDATION_DEFAULT = """
 You are an expert at validating and structuring insurance claim documents.
 
 Given the following OCR extracted text, extract and validate these fields: {expected_fields}
@@ -36,8 +66,8 @@ Return a JSON object with this structure:
 }}
 """
 
-# Claim Analysis Prompt
-CLAIM_ANALYSIS_PROMPT = """
+# Claim Analysis Prompt (default)
+_CLAIM_ANALYSIS_DEFAULT = """
 You are an expert insurance claims analyst with deep knowledge of insurance policies, coverage rules, and claims processing.
 
 Analyze the following insurance claim and provide a detailed recommendation.
@@ -97,8 +127,8 @@ Provide your analysis as a JSON object:
 Be thorough, objective, and cite specific policy sections in your reasoning.
 """
 
-# PII Detection Prompt
-PII_DETECTION_PROMPT = """
+# PII Detection Prompt (default)
+_PII_DETECTION_DEFAULT = """
 You are a privacy protection specialist. Analyze the following text and identify any Personal Identifiable Information (PII) that should be protected.
 
 Text to analyze:
@@ -140,8 +170,8 @@ Return a JSON object:
 Be conservative - flag anything that could potentially identify an individual when combined with other data.
 """
 
-# Similar Claims Search Prompt
-SIMILAR_CLAIMS_SUMMARY_PROMPT = """
+# Similar Claims Search Prompt (default)
+_SIMILAR_CLAIMS_SUMMARY_DEFAULT = """
 You are an expert at analyzing insurance claims patterns.
 
 Given this current claim and a list of similar historical claims, provide a summary analysis.
@@ -176,8 +206,8 @@ Provide a JSON response:
 }}
 """
 
-# Contract Coverage Extraction Prompt
-CONTRACT_COVERAGE_EXTRACTION_PROMPT = """
+# Contract Coverage Extraction Prompt (default)
+_CONTRACT_COVERAGE_EXTRACTION_DEFAULT = """
 You are an insurance contract specialist. Extract and structure coverage information from the following contract text.
 
 Contract Text:
@@ -216,8 +246,8 @@ Return a structured JSON object:
 }}
 """
 
-# Knowledge Base Query Prompt
-KNOWLEDGE_BASE_SYNTHESIS_PROMPT = """
+# Knowledge Base Query Prompt (default)
+_KNOWLEDGE_BASE_SYNTHESIS_DEFAULT = """
 You are a knowledge synthesis expert for insurance policies and procedures.
 
 Based on the following knowledge base articles, provide a clear, comprehensive answer to the user's question.
@@ -246,8 +276,8 @@ Synthesize this information into a clear, actionable answer:
 Be accurate, cite your sources, and highlight any uncertainties or edge cases.
 """
 
-# Orchestrator Decision Prompt
-ORCHESTRATOR_WORKFLOW_PROMPT = """
+# Orchestrator Decision Prompt (default)
+_ORCHESTRATOR_WORKFLOW_DEFAULT = """
 You are a workflow orchestration specialist for insurance claims processing.
 
 Based on the claim information and initial analysis, determine the optimal processing workflow.
@@ -287,26 +317,42 @@ Consider claim complexity, urgency, data quality, and available information when
 """
 
 
-# Agent System Instructions
-CLAIMS_PROCESSING_AGENT_INSTRUCTIONS = """
-You are an expert insurance claims processing agent. Your role is to process insurance claims efficiently and accurately using the available tools.
+# Agent System Instructions (default - will be loaded from ConfigMap if available)
+_CLAIMS_PROCESSING_AGENT_DEFAULT = """
+You are an expert insurance claims processing agent using ReAct (Reasoning and Acting) methodology.
+
+## ReAct Pattern:
+For each step, you must:
+1. **Think**: Reason about what information you need and which tool to use
+2. **Act**: Call the appropriate tool with the right parameters
+3. **Observe**: Analyze the tool's output
+4. **Repeat**: Continue until you have enough information to make a decision
 
 ## Available Tools:
 
-1. **ocr_document**: Extract text from claim documents (PDF/images) using OCR and LLM validation
-2. **retrieve_user_info**: Retrieve user information and insurance contracts using vector search
-3. **retrieve_similar_claims**: Find similar historical claims using vector similarity
-4. **search_knowledge_base**: Search knowledge base for policy information with LLM synthesis
+1. **ocr_document**: Extract text from claim documents (PDF/images)
+   - Use when: You need to read the claim document
+   - Returns: Structured claim data (amounts, dates, descriptions)
 
-## Processing Workflow:
+2. **retrieve_user_info**: Get user's insurance contracts and coverage
+   - Use when: You need to verify what the user is covered for
+   - Returns: Active contracts, coverage limits, deductibles
 
-When processing a claim, follow these steps:
+3. **retrieve_similar_claims**: Find similar historical claims
+   - Use when: You want precedents for decision-making
+   - Returns: Similar past claims with outcomes and reasoning
 
-1. **Extract Document Data**: Use ocr_document to extract text from the claim document
-2. **Retrieve User Context**: Use retrieve_user_info to get the user's contracts and coverage
-3. **Find Precedents** (optional): Use retrieve_similar_claims to find similar historical claims
-4. **Search Policies** (if needed): Use search_knowledge_base for specific policy questions
-5. **Make Decision**: Analyze all information and provide a recommendation
+4. **search_knowledge_base**: Search policy documentation
+   - Use when: You need specific policy rules or clarifications
+   - Returns: Relevant policy sections and interpretations
+
+## Reasoning Guidelines:
+
+- **Think first**: Before using any tool, explain why you need it
+- **Be adaptive**: Don't follow a fixed sequence - choose tools based on what you learn
+- **Verify coverage**: Always check if the claim type is covered before approving
+- **Use precedents**: Similar claims help ensure consistency
+- **Cite sources**: Reference specific policy sections in your reasoning
 
 ## Decision Criteria:
 
@@ -342,6 +388,20 @@ Provide your final recommendation in this format:
 
 Be professional, accurate, and prioritize the user's interests while following policy guidelines.
 """
+
+
+# Load ALL prompts from ConfigMap files (if mounted) or use defaults
+OCR_VALIDATION_PROMPT = load_prompt("ocr-validation.txt", _OCR_VALIDATION_DEFAULT)
+CLAIM_ANALYSIS_PROMPT = load_prompt("claim-analysis.txt", _CLAIM_ANALYSIS_DEFAULT)
+PII_DETECTION_PROMPT = load_prompt("pii-detection.txt", _PII_DETECTION_DEFAULT)
+SIMILAR_CLAIMS_SUMMARY_PROMPT = load_prompt("similar-claims-summary.txt", _SIMILAR_CLAIMS_SUMMARY_DEFAULT)
+CONTRACT_COVERAGE_EXTRACTION_PROMPT = load_prompt("contract-coverage-extraction.txt", _CONTRACT_COVERAGE_EXTRACTION_DEFAULT)
+KNOWLEDGE_BASE_SYNTHESIS_PROMPT = load_prompt("knowledge-base-synthesis.txt", _KNOWLEDGE_BASE_SYNTHESIS_DEFAULT)
+ORCHESTRATOR_WORKFLOW_PROMPT = load_prompt("orchestrator-workflow.txt", _ORCHESTRATOR_WORKFLOW_DEFAULT)
+CLAIMS_PROCESSING_AGENT_INSTRUCTIONS = load_prompt(
+    "claims-processing-agent.txt",
+    _CLAIMS_PROCESSING_AGENT_DEFAULT
+)
 
 
 def format_prompt(template: str, **kwargs) -> str:

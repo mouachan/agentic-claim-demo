@@ -9,10 +9,12 @@ psycopg2-binary==2.9.9
 alembic==1.13.1
 pgvector==0.2.4
 
-# LlamaStack client
-# Note: Adjust based on actual RHOAI LlamaStack client package
+# LlamaStack client (v0.3.0 compatible with server v0.3.0rc3+rhai0)
+llama-stack-client>=0.3.0
+fire==0.7.1
 requests==2.31.0
 httpx==0.26.0
+tenacity==8.2.3
 
 # MCP Protocol
 # Note: Install official MCP SDK when available
@@ -33,10 +35,7 @@ python-dateutil==2.8.2
 # Async support
 aiofiles==23.2.1
 asyncpg==0.29.0
-
-# Testing
-pytest==7.4.4
-pytest-asyncio==0.23.3
+greenlet>=3.0.0
 
 # Logging
 python-json-logger==2.0.7
