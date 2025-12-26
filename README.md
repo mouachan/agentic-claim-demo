@@ -314,52 +314,76 @@ oc exec -it $(oc get pod -l app=llama-stack -o name | head -1) -- \
   curl -s http://localhost:8321/v1/tool_groups
 ```
 
-#### Step 6: Deploy MCP Servers
+#### Step 6: Deploy Qwen-VL 7B for OCR (Optional but Recommended)
 
-**Prerequisites**: Ensure Qwen-VL 7B model is deployed for OCR
+The OCR MCP Server uses **Qwen-VL 7B** multimodal vision-language model for document text extraction.
+
+**Option A: Use existing Qwen-VL deployment**
 ```bash
-# If not already deployed, the OCR server expects Qwen-VL at:
-# http://qwen-vl-7b-predictor.multimodal-demo.svc.cluster.local:80/v1
-
-# Verify Qwen-VL is accessible (or deploy it to your namespace)
+# If already deployed in your cluster, verify accessibility
 oc get inferenceservice qwen-vl-7b -n multimodal-demo
 ```
 
-**6.1 Deploy OCR Server**
+**Option B: Deploy Qwen-VL to your namespace**
+
+Follow the complete deployment guide: [`openshift/qwen-vl-7b/README.md`](openshift/qwen-vl-7b/README.md)
+
+Quick deployment:
+```bash
+cd openshift/qwen-vl-7b
+
+# 1. Edit files to replace placeholders (namespace, HF token, storage class)
+# 2. Deploy in order
+oc apply -f 01-pvc.yaml
+oc apply -f 02-secret-hf-token.yaml
+oc apply -f 03-model-download-job.yaml
+oc wait --for=condition=complete job/download-qwen-model --timeout=600s
+oc apply -f 04-servingruntime.yaml
+oc apply -f 05-inferenceservice.yaml
+
+# 3. Wait for model to be ready
+oc wait --for=condition=ready pod -l serving.kserve.io/inferenceservice=qwen-vl-7b --timeout=600s
+```
+
+**Note**: Qwen-VL requires 1 GPU (L40 or equivalent with 24GB+ VRAM) and ~30GB storage.
+
+#### Step 7: Deploy MCP Servers
+
+**7.1 Deploy OCR Server**
 ```bash
 oc apply -f openshift/deployments/ocr-server-deployment.yaml
 oc apply -f openshift/services/ocr-service.yaml
 ```
 
-**6.2 Deploy RAG Server**
+**7.2 Deploy RAG Server**
 ```bash
 oc apply -f openshift/deployments/rag-server-deployment.yaml
 oc apply -f openshift/services/rag-service.yaml
 ```
 
-**6.3 Verify MCP Servers**
+**7.3 Verify MCP Servers**
 ```bash
 oc get pods -l component=mcp-server
 oc logs -l app=ocr-server --tail=20
 oc logs -l app=rag-server --tail=20
 ```
 
-#### Step 7: Deploy Backend API
+#### Step 8: Deploy Backend API
 
-**7.1 Create Backend ConfigMaps**
+**8.1 Create Backend ConfigMaps**
 ```bash
 oc apply -f openshift/configmaps/backend-config.yaml
 oc apply -f openshift/configmaps/prompts-config.yaml
 ```
 
-**7.2 Deploy Backend**
+**8.2 Deploy Backend**
 ```bash
 oc apply -f openshift/deployments/backend-deployment.yaml
 oc apply -f openshift/services/backend-service.yaml
 oc apply -f openshift/routes/backend-route.yaml
 ```
 
-**7.3 Verify Backend**
+**8.3 Verify Backend**
 ```bash
 oc get pods -l app=backend
 oc logs -l app=backend --tail=50
@@ -369,30 +393,30 @@ BACKEND_URL=$(oc get route backend -o jsonpath='{.spec.host}')
 curl http://$BACKEND_URL/health
 ```
 
-#### Step 8: Deploy Frontend
+#### Step 9: Deploy Frontend
 
-**8.1 Deploy Frontend**
+**9.1 Deploy Frontend**
 ```bash
 oc apply -f openshift/deployments/frontend-deployment.yaml
 oc apply -f openshift/services/frontend-service.yaml
 oc apply -f openshift/routes/frontend-route.yaml
 ```
 
-**8.2 Get Frontend URL**
+**9.2 Get Frontend URL**
 ```bash
 FRONTEND_URL=$(oc get route frontend -o jsonpath='{.spec.host}')
 echo "Access the application at: http://$FRONTEND_URL"
 ```
 
-#### Step 9: Test End-to-End Workflow
+#### Step 10: Test End-to-End Workflow
 
-**9.1 Access the Frontend**
+**10.1 Access the Frontend**
 ```bash
 # Open browser to frontend URL
 echo "Application URL: http://$(oc get route frontend -o jsonpath='{.spec.host}')"
 ```
 
-**9.2 Test Claims Processing via API**
+**10.2 Test Claims Processing via API**
 ```bash
 # Get a sample claim ID from database
 CLAIM_ID=$(oc exec postgresql-0 -- psql -U claims_user -d claims_db -t -c \
@@ -408,7 +432,7 @@ curl -X POST "http://$BACKEND_URL/api/v1/claims/${CLAIM_ID}/process" \
 curl "http://$BACKEND_URL/api/v1/claims/${CLAIM_ID}/status"
 ```
 
-**9.3 Monitor Processing**
+**10.3 Monitor Processing**
 ```bash
 # Watch backend logs
 oc logs -f -l app=backend
