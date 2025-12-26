@@ -276,46 +276,6 @@ Synthesize this information into a clear, actionable answer:
 Be accurate, cite your sources, and highlight any uncertainties or edge cases.
 """
 
-# Orchestrator Decision Prompt (default)
-_ORCHESTRATOR_WORKFLOW_DEFAULT = """
-You are a workflow orchestration specialist for insurance claims processing.
-
-Based on the claim information and initial analysis, determine the optimal processing workflow.
-
-Claim Information:
-{claim_info}
-
-Initial OCR Results:
-{ocr_results}
-
-Available Processing Options:
-1. Standard workflow: OCR → Guardrails → RAG → LLM Decision
-2. Expedited workflow: OCR → LLM Decision (skip RAG if not needed)
-3. Manual review workflow: Flag for immediate human review
-
-Determine the best workflow and return:
-{{
-    "recommended_workflow": "standard|expedited|manual_review",
-    "reasoning": "explanation of why this workflow was chosen",
-    "workflow_steps": [
-        {{
-            "step": "step name",
-            "agent": "agent to use",
-            "required": boolean,
-            "estimated_time_seconds": number,
-            "conditions": "any conditions for executing this step"
-        }}
-    ],
-    "skip_steps": ["list of steps that can be skipped and why"],
-    "priority_level": "low|medium|high|urgent",
-    "estimated_total_time_seconds": number,
-    "risk_factors": ["any risk factors identified"],
-    "confidence": 0.0-1.0
-}}
-
-Consider claim complexity, urgency, data quality, and available information when making your recommendation.
-"""
-
 
 # Agent System Instructions (default - will be loaded from ConfigMap if available)
 _CLAIMS_PROCESSING_AGENT_DEFAULT = """
@@ -397,7 +357,6 @@ PII_DETECTION_PROMPT = load_prompt("pii-detection.txt", _PII_DETECTION_DEFAULT)
 SIMILAR_CLAIMS_SUMMARY_PROMPT = load_prompt("similar-claims-summary.txt", _SIMILAR_CLAIMS_SUMMARY_DEFAULT)
 CONTRACT_COVERAGE_EXTRACTION_PROMPT = load_prompt("contract-coverage-extraction.txt", _CONTRACT_COVERAGE_EXTRACTION_DEFAULT)
 KNOWLEDGE_BASE_SYNTHESIS_PROMPT = load_prompt("knowledge-base-synthesis.txt", _KNOWLEDGE_BASE_SYNTHESIS_DEFAULT)
-ORCHESTRATOR_WORKFLOW_PROMPT = load_prompt("orchestrator-workflow.txt", _ORCHESTRATOR_WORKFLOW_DEFAULT)
 CLAIMS_PROCESSING_AGENT_INSTRUCTIONS = load_prompt(
     "claims-processing-agent.txt",
     _CLAIMS_PROCESSING_AGENT_DEFAULT

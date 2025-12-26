@@ -270,8 +270,7 @@ agentic-claim-demo/
 │   │       └── prompts.py    # Agent prompts
 │   ├── mcp_servers/          # Custom MCP servers
 │   │   ├── ocr_server/
-│   │   ├── rag_server/
-│   │   └── orchestrator_server/
+│   │   └── rag_server/
 │   └── openshift/            # OpenShift manifests
 │       ├── configmaps/
 │       ├── deployments/

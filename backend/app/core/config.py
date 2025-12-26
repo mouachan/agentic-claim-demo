@@ -58,9 +58,6 @@ class Settings(BaseSettings):
     # MCP Servers
     ocr_server_url: str = "http://ocr-server.claims-demo.svc.cluster.local:8080"
     rag_server_url: str = "http://rag-server.claims-demo.svc.cluster.local:8080"
-    orchestrator_server_url: str = (
-        "http://orchestrator-server.claims-demo.svc.cluster.local:8080"
-    )
     guardrails_server_url: str = (
         "http://claims-guardrails.claims-demo.svc.cluster.local:8080"
     )
