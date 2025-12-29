@@ -334,52 +334,136 @@ oc get pods -l app=guardrails
 oc logs -l app=guardrails-orchestrator --tail=20
 ```
 
-#### Step 5: Configure and Deploy LlamaStack
+#### Step 5: Configure and Deploy LlamaStack with OpenShift AI 3.0
+
+LlamaStack is **managed by the OpenShift AI 3.0 Operator** using the `LlamaStackDistribution` custom resource. The operator handles the complete deployment lifecycle.
 
 **5.1 Create LlamaStack ConfigMap with MCP Tools**
 
-This ConfigMap contains the complete LlamaStack configuration including **MCP tool groups** for OCR and RAG servers.
+First, create a ConfigMap containing the LlamaStack configuration with MCP tool groups:
 
 ```bash
 # Apply the ConfigMap with MCP tools configuration
-oc apply -f openshift/configmaps/llamastack-config.yaml
+oc apply -f openshift/configmaps/llamastack-config.yaml -n claims-demo
 ```
 
-**Important**: This ConfigMap includes:
-- MCP tool group `mcp::ocr-server` → `http://ocr-server.claims-demo.svc.cluster.local:8080/sse`
-- MCP tool group `mcp::rag-server` → `http://rag-server.claims-demo.svc.cluster.local:8080/sse`
-- PostgreSQL + pgvector configuration
-- vLLM inference providers (Llama 3.2 3B, Mistral 3 14B)
-- ReActAgent runtime configuration
+**What's in this ConfigMap:**
+- **MCP Tool Groups**:
+  - `mcp::ocr-server` → `http://ocr-server.claims-demo.svc.cluster.local:8080/sse`
+  - `mcp::rag-server` → `http://rag-server.claims-demo.svc.cluster.local:8080/sse`
+- **Vector Database**: PostgreSQL + pgvector configuration
+- **vLLM Inference**: Llama 3.2 3B + Mistral 3 14B providers
+- **ReActAgent Runtime**: Agent orchestration configuration
+- **Eval Provider**: For agent evaluation
 
-**5.2 Deploy/Update LlamaStack (managed by OpenShift AI Operator)**
+📖 **Reference**: See [`openshift/llamastack/working-run.yaml`](openshift/llamastack/working-run.yaml) for the full configuration format.
 
-LlamaStack is deployed via **LlamaStackDistribution CRD** and managed by the OpenShift AI Operator.
+**5.2 Deploy LlamaStack via LlamaStackDistribution CRD**
+
+LlamaStack is deployed using the **LlamaStackDistribution** custom resource, which is managed by the OpenShift AI Operator.
+
+Create the LlamaStackDistribution:
+
+```yaml
+apiVersion: llamastack.io/v1alpha1
+kind: LlamaStackDistribution
+metadata:
+  name: claims-llamastack
+  namespace: claims-demo
+spec:
+  replicas: 1
+  server:
+    distribution:
+      name: rh-dev
+    containerSpec:
+      name: llama-stack
+      port: 8321
+    userConfig:
+      configMapName: llama-stack-config
+      configMapNamespace: claims-demo
+```
+
+Apply the CRD:
+```bash
+oc apply -f openshift/crds/llamastack-distribution.yaml
+```
+
+**How it works:**
+1. The **OpenShift AI Operator** watches for `LlamaStackDistribution` resources
+2. The operator automatically creates a **Deployment**, **Service**, and **ConfigMap mount**
+3. The ConfigMap is mounted to `/etc/llama-stack/run.yaml` in the pod
+4. LlamaStack server starts and loads the configuration at startup
+
+**5.3 Wait for LlamaStack to be Ready**
 
 ```bash
-# Verify LlamaStackDistribution exists
-oc get llamastackdistribution claims-llamastack
+# Check the LlamaStackDistribution status
+oc get llamastackdistribution claims-llamastack -n claims-demo
 
-# If exists, restart to load new ConfigMap
-oc delete pod -l app=llama-stack
+# Wait for the pod to be ready
+oc wait --for=condition=ready pod -l app=llama-stack -n claims-demo --timeout=300s
 
-# If not exists, it should already be deployed by OpenShift AI
-# Check service endpoint
-oc get svc claims-llamastack-service
-
-# Wait for LlamaStack to be ready
-oc wait --for=condition=ready pod -l app=llama-stack --timeout=300s
+# Verify the service endpoint
+oc get svc claims-llamastack-service -n claims-demo
 ```
 
-**5.3 Verify MCP Tools Configuration**
+**5.4 Verify MCP Tools Registration**
+
+Once LlamaStack is running, verify that MCP servers are properly registered:
+
 ```bash
 # Check LlamaStack logs for MCP server registration
-oc logs -l app=llama-stack --tail=50 | grep -i mcp
+oc logs -l app=llama-stack -n claims-demo --tail=100 | grep -i mcp
 
-# Verify toolgroups
-oc exec -it $(oc get pod -l app=llama-stack -o name | head -1) -- \
+# Verify tool groups via API
+oc exec -it $(oc get pod -l app=llama-stack -o name -n claims-demo | head -1) -- \
   curl -s http://localhost:8321/v1/tool_groups
 ```
+
+Expected output should show:
+```json
+{
+  "tool_groups": [
+    {
+      "toolgroup_id": "builtin::rag",
+      "provider_id": "rag-runtime"
+    },
+    {
+      "toolgroup_id": "mcp::ocr-server",
+      "provider_id": "model-context-protocol"
+    },
+    {
+      "toolgroup_id": "mcp::rag-server",
+      "provider_id": "model-context-protocol"
+    }
+  ]
+}
+```
+
+**5.5 Updating LlamaStack Configuration**
+
+To update the LlamaStack configuration after initial deployment:
+
+```bash
+# 1. Update the ConfigMap
+oc edit configmap llama-stack-config -n claims-demo
+# OR
+oc apply -f openshift/configmaps/llamastack-config.yaml
+
+# 2. Restart LlamaStack pod to load new configuration
+# The operator will automatically recreate the pod
+oc delete pod -l app=llama-stack -n claims-demo
+
+# 3. Wait for new pod to be ready
+oc wait --for=condition=ready pod -l app=llama-stack -n claims-demo --timeout=300s
+
+# 4. Verify the new configuration is loaded
+oc logs -l app=llama-stack -n claims-demo --tail=50
+```
+
+📚 **Documentation**:
+- [Red Hat OpenShift AI 3.0 - Working with Llama Stack](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/)
+- [LlamaStack Configuration Reference](openshift/llamastack/README.md)
 
 #### Step 6: Deploy Qwen-VL 7B for OCR (Optional but Recommended)
 

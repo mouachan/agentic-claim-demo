@@ -1,6 +1,25 @@
 ---
-# LlamaStackDistribution - OpenShift AI 3.0 conforme
-# Based on working cluster configuration
+# LlamaStackDistribution - Managed by OpenShift AI 3.0 Operator
+#
+# This custom resource is managed by the OpenShift AI LlamaStack Operator.
+# The operator automatically creates:
+#   - Deployment for the LlamaStack server
+#   - Service for API access (port 8321)
+#   - ConfigMap mount from 'llama-stack-config'
+#
+# Configuration:
+#   - The 'userConfig' section references the ConfigMap containing run.yaml
+#   - The ConfigMap is mounted to /etc/llama-stack/run.yaml in the pod
+#   - LlamaStack loads this configuration at startup
+#
+# To update configuration:
+#   1. Update the ConfigMap: oc edit configmap llama-stack-config
+#   2. Delete the pod to restart: oc delete pod -l app=llama-stack
+#   3. The operator will recreate the pod with new config
+#
+# Documentation:
+#   https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/
+#
 apiVersion: llamastack.io/v1alpha1
 kind: LlamaStackDistribution
 metadata:
