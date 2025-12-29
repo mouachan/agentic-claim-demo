@@ -1,11 +1,11 @@
-# LlamaStack Configuration Files
+# LlamaStack Configuration
 
-This directory contains reference LlamaStack configuration files that demonstrate different deployment scenarios.
+This directory contains the reference LlamaStack configuration file used in production deployment.
 
-## Files
+## Configuration File
 
 ### `working-run.yaml`
-**Status**: ✅ Working configuration (actively used)
+**Status**: ✅ Production configuration (actively used)
 
 Complete LlamaStack configuration with:
 - **MCP Tool Groups**: OCR server + RAG server via Model Context Protocol
@@ -31,12 +31,7 @@ tool_groups:
       uri: http://rag-server.claims-demo.svc.cluster.local:8080/sse
 ```
 
-### `complete-run.yaml`
-**Status**: 📝 Reference/experimental configuration
-
-Extended configuration with additional providers and capabilities. May include experimental or optional features not used in production deployment.
-
-## How These Files Are Used
+## How This Configuration Is Used
 
 ### In Production Deployment
 
@@ -117,17 +112,6 @@ To update the LlamaStack configuration:
    │   :8080/sse │    │   :8080/sse │
    └─────────────┘    └─────────────┘
 ```
-
-## Configuration Comparison
-
-| Feature | working-run.yaml | complete-run.yaml |
-|---------|------------------|-------------------|
-| MCP Tools | ✅ OCR + RAG | ❓ (check file) |
-| pgvector | ✅ Configured | ❓ |
-| vLLM Inference | ✅ 2 providers | ❓ |
-| ReActAgent | ✅ Enabled | ❓ |
-| Eval API | ✅ Enabled | ❓ |
-| Safety Shields | ⚠️ TrustyAI (separate) | ❓ |
 
 ## Troubleshooting
 
