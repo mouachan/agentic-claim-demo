@@ -6,6 +6,7 @@ import asyncio
 import base64
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -232,6 +233,10 @@ async def ocr_document(request: OCRRequest) -> OCRResponse:
 
     MCP Tool: ocr_document
     """
+    # ============== TIMING START ==============
+    start_time = time.time()
+    logger.info(f"⏱️  OCR STARTED for document: {request.document_path}")
+
     try:
         document_path = Path(request.document_path)
 
@@ -246,6 +251,8 @@ async def ocr_document(request: OCRRequest) -> OCRResponse:
         # Determine file type and extract text
         file_extension = document_path.suffix.lower()
 
+        # ============== TIMING: OCR Extraction ==============
+        extraction_start = time.time()
         if file_extension in ['.pdf']:
             raw_text, confidence = await extract_text_from_pdf(document_path)
         elif file_extension in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp']:
@@ -255,9 +262,22 @@ async def ocr_document(request: OCRRequest) -> OCRResponse:
                 status_code=400,
                 detail=f"Unsupported file type: {file_extension}"
             )
+        extraction_time = time.time() - extraction_start
+        logger.info(f"⏱️  OCR Extraction completed in {extraction_time:.2f}s (confidence: {confidence:.2f})")
 
-        # Validate with LLM
+        # ============== TIMING: LLM Validation ==============
+        validation_start = time.time()
         structured_data = await validate_with_llm(raw_text, request.document_type)
+        validation_time = time.time() - validation_start
+        logger.info(f"⏱️  LLM Validation completed in {validation_time:.2f}s")
+
+        # ============== TIMING END ==============
+        total_time = time.time() - start_time
+        logger.info(f"⏱️  OCR COMPLETED in {total_time:.2f}s (Extraction: {extraction_time:.2f}s, Validation: {validation_time:.2f}s)")
+
+        # Check if we exceeded 10s timeout threshold
+        if total_time > 10.0:
+            logger.warning(f"⚠️  OCR TOO SLOW: {total_time:.2f}s > 10s LlamaStack timeout!")
 
         return OCRResponse(
             success=True,

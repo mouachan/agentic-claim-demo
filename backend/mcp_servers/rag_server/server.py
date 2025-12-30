@@ -6,6 +6,7 @@ All vector operations go through LlamaStack APIs
 import asyncio
 import logging
 import os
+import time
 from typing import Dict, Any, List, Optional
 
 import httpx
@@ -171,14 +172,21 @@ async def retrieve_user_info(request: RetrieveUserInfoRequest) -> RetrieveUserIn
 
     MCP Tool: retrieve_user_info
     """
+    # ============== TIMING START ==============
+    start_time = time.time()
+    logger.info(f"⏱️  RAG RETRIEVE_USER_INFO STARTED for user: {request.user_id}")
+
     try:
         # Search user contracts via LlamaStack
+        search_start = time.time()
         results = await vector_search_llamastack(
             query=request.query,
             collection="user_contracts",
             top_k=request.top_k,
             filters={"user_id": request.user_id, "is_active": True}
         )
+        search_time = time.time() - search_start
+        logger.info(f"⏱️  Vector search completed in {search_time:.2f}s ({len(results)} results)")
 
         contracts = []
         similarity_scores = []
@@ -202,7 +210,13 @@ async def retrieve_user_info(request: RetrieveUserInfoRequest) -> RetrieveUserIn
             # Add more user info if available
         }
 
-        logger.info(f"Retrieved info for user {request.user_id} with {len(contracts)} contracts via LlamaStack")
+        # ============== TIMING END ==============
+        total_time = time.time() - start_time
+        logger.info(f"⏱️  RAG RETRIEVE_USER_INFO COMPLETED in {total_time:.2f}s for user {request.user_id} ({len(contracts)} contracts)")
+
+        # Check if we exceeded 10s timeout threshold
+        if total_time > 10.0:
+            logger.warning(f"⚠️  RAG TOO SLOW: {total_time:.2f}s > 10s LlamaStack timeout!")
 
         return RetrieveUserInfoResponse(
             user_info=user_info,
@@ -225,6 +239,10 @@ async def retrieve_similar_claims(request: RetrieveSimilarClaimsRequest) -> Retr
 
     MCP Tool: retrieve_similar_claims
     """
+    # ============== TIMING START ==============
+    start_time = time.time()
+    logger.info(f"⏱️  RAG RETRIEVE_SIMILAR_CLAIMS STARTED (type: {request.claim_type}, top_k: {request.top_k})")
+
     try:
         # Search similar claims via LlamaStack
         filters = {}
@@ -232,12 +250,15 @@ async def retrieve_similar_claims(request: RetrieveSimilarClaimsRequest) -> Retr
             filters["claim_type"] = request.claim_type
         filters["status"] = {"$in": ["completed", "manual_review"]}
 
+        search_start = time.time()
         results = await vector_search_llamastack(
             query=request.claim_text,
             collection="claim_documents",
             top_k=request.top_k,
             filters=filters
         )
+        search_time = time.time() - search_start
+        logger.info(f"⏱️  Vector search completed in {search_time:.2f}s ({len(results)} results)")
 
         similar_claims = []
         for result in results:
@@ -253,7 +274,13 @@ async def retrieve_similar_claims(request: RetrieveSimilarClaimsRequest) -> Retr
                     processing_time=metadata.get("processing_time_ms")
                 ))
 
-        logger.info(f"Found {len(similar_claims)} similar claims via LlamaStack")
+        # ============== TIMING END ==============
+        total_time = time.time() - start_time
+        logger.info(f"⏱️  RAG RETRIEVE_SIMILAR_CLAIMS COMPLETED in {total_time:.2f}s ({len(similar_claims)} similar claims found)")
+
+        # Check if we exceeded 10s timeout threshold
+        if total_time > 10.0:
+            logger.warning(f"⚠️  RAG TOO SLOW: {total_time:.2f}s > 10s LlamaStack timeout!")
 
         return RetrieveSimilarClaimsResponse(similar_claims=similar_claims)
 
