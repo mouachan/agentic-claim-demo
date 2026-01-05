@@ -22,9 +22,5 @@ USER appuser
 
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8080/health/live')" || exit 1
-
-# Start MCP server with SSE protocol
-CMD ["uvicorn", "mcp_server:app", "--host", "0.0.0.0", "--port", "8080"]
+# Start MCP server with FastMCP SDK
+CMD ["python", "mcp_server.py"]
