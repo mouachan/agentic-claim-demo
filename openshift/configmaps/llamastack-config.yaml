@@ -128,7 +128,14 @@ data:
     metadata_store:
       type: sqlite
       db_path: /opt/app-root/src/.llama/distributions/rh/inference_store.db
-    
+
+    # Vector databases configuration
+    vector_dbs:
+      - vector_db_id: claims_vector_db
+        embedding_model: granite-embedding-125m
+        embedding_dimension: 768
+        provider_id: pgvector
+
     models:
       - provider_id: sentence-transformers
         model_id: granite-embedding-125m

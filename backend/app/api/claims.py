@@ -125,21 +125,29 @@ async def process_claim(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Start processing a claim using LlamaStack ReAct Agent.
+    Start processing a claim using LlamaStack ReActAgent SDK.
 
     The ReActAgent uses a Thought-Action-Observation loop to:
     - Reason about the next step (Thought)
     - Execute a tool if necessary (Action)
     - Observe the result (Observation)
     - Repeat until reaching the final answer
+
+    This version uses the llama-stack-client SDK with:
+    - LlamaStackClient
+    - Agent.create() with AgentConfig
+    - EventLogger for event logging
+
+    Note: For the HTTP Response API version (without SDK),
+    see branch 'http-response-api'
     """
     import time
     import json
-    from llama_stack_client import LlamaStackClient
-    from llama_stack_client.lib.agents.react.agent import ReActAgent
-    from llama_stack_client.lib.agents.react.tool_parser import ReActOutput
-    from llama_stack_client.lib.agents.event_logger import EventLogger
     import llama_stack_client
+    from llama_stack_client import LlamaStackClient
+    from llama_stack_client.lib.agents.agent import Agent
+    from llama_stack_client.lib.agents.event_logger import EventLogger
+    from llama_stack_client.types.agent_create_params import AgentConfig
     from app.llamastack.prompts import CLAIMS_PROCESSING_AGENT_INSTRUCTIONS
 
     try:
@@ -155,40 +163,48 @@ async def process_claim(
         claim.status = models.ClaimStatus.processing
         await db.commit()
 
-        # Get LlamaStack client
-        client = LlamaStackClient(base_url=settings.llamastack_endpoint)
-
         # Track processing start time
         start_time = time.time()
 
         try:
-            # Build tools list with MCP server format (required by Responses API)
-            tools = []
+            # Initialize LlamaStack client
+            client = LlamaStackClient(base_url=settings.llamastack_endpoint)
+
+            # Build MCP tools list
+            # Format: {"type": "mcp", "server_label": "...", "server_url": "..."}
+            mcp_tools = []
             if not process_request.skip_ocr:
-                tools.append({
+                mcp_tools.append({
                     "type": "mcp",
                     "server_label": "ocr-server",
                     "server_url": "http://ocr-server.claims-demo.svc.cluster.local:8080/sse"
                 })
             if process_request.enable_rag:
-                tools.append({
+                mcp_tools.append({
                     "type": "mcp",
                     "server_label": "rag-server",
                     "server_url": "http://rag-server.claims-demo.svc.cluster.local:8080/sse"
                 })
 
-            # Create ReActAgent
-            agent = ReActAgent(
+            # Create Agent with configuration
+            agent = Agent(
                 client=client,
-                model=settings.llamastack_default_model,
-                tools=tools,
-                instructions=CLAIMS_PROCESSING_AGENT_INSTRUCTIONS,
+                agent_config=AgentConfig(
+                    model=settings.llamastack_default_model,
+                    instructions=CLAIMS_PROCESSING_AGENT_INSTRUCTIONS,
+                    enable_session_persistence=False,
+                    tools=mcp_tools,
+                    tool_choice="auto",
+                    tool_prompt_format="json",
+                    max_infer_iters=10,
+                )
             )
 
             # Create session
-            session_id = agent.create_session(f"claim_{claim_id}")
+            session_id = agent.create_session(session_name=f"claim_{claim_id}")
+            logger.info(f"Created ReActAgent session: {session_id}")
 
-            # Prepare user message for the agent
+            # Prepare user message
             user_message = f"""
 Process this insurance claim:
 
@@ -209,27 +225,30 @@ Workflow configuration:
 - Enable RAG retrieval: {process_request.enable_rag}
 """
 
-            # Run agent turn
+            # Execute agent (streaming mode)
+            logger.info("Starting ReActAgent execution...")
+
             response = agent.create_turn(
-                messages=[{"role": "user", "content": user_message}],
+                messages=[
+                    {"role": "user", "content": user_message}
+                ],
                 session_id=session_id,
-                stream=False,
+                stream=True
             )
 
-            # Parse response
-            final_content = None
-            for log in EventLogger().log(response):
-                if hasattr(log, 'role') and log.role == "assistant":
-                    final_content = str(log)
+            # Collect all events
+            event_logger = EventLogger()
+            for chunk in response:
+                event_logger.log(chunk)
 
-            final_response = final_content
+            # Get final response
+            final_response = event_logger.get_response()
 
-            if not final_response or final_response == "No response from agent":
+            if not final_response:
                 raise ValueError("Agent did not provide a final response")
 
-            # Parse the agent's decision (expecting JSON in the response)
+            # Parse the agent's decision
             try:
-                # Try to extract JSON from the response
                 decision_data = json.loads(final_response) if "{" in final_response else {
                     "recommendation": "manual_review",
                     "confidence": 0.5,
@@ -274,7 +293,7 @@ Workflow configuration:
 
             await db.commit()
 
-            logger.info(f"Claim {claim_id} processed via ReAct Agent: {recommendation}")
+            logger.info(f"Claim {claim_id} processed via ReActAgent SDK: {recommendation}")
             return schemas.ProcessClaimResponse(
                 claim_id=claim_id,
                 status=claim.status.value,
@@ -311,7 +330,7 @@ Workflow configuration:
         raise
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error processing claim: {str(e)}")
+        logger.error(f"Error processing claim with SDK: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

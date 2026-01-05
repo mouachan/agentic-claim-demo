@@ -33,7 +33,7 @@ app = FastAPI(
 # Configuration
 QWEN_VL_ENDPOINT = os.getenv(
     "QWEN_VL_ENDPOINT",
-    "http://qwen-vl-7b-predictor.multimodal-demo.svc.cluster.local:80/v1"
+    "http://qwen-vl-7b-predictor.multimodal-demo.svc.cluster.local:8080/v1"
 )
 LLAMASTACK_ENDPOINT = os.getenv("LLAMASTACK_ENDPOINT", "http://localhost:8090")
 
@@ -137,9 +137,15 @@ async def extract_text_from_pdf(pdf_path: Path) -> tuple[str, float]:
         all_confidences = []
 
         for i, image in enumerate(images):
-            # Save temp image
-            temp_image_path = Path(f"/tmp/page_{i}.png")
-            image.save(temp_image_path, "PNG")
+            # Optimize image to reduce Qwen-VL processing time
+            # Resize to 70% + JPEG quality 85 → ~8s instead of ~12s
+            new_size = (int(image.size[0] * 0.7), int(image.size[1] * 0.7))
+            optimized_image = image.resize(new_size, Image.Resampling.LANCZOS)
+            optimized_image = optimized_image.convert('RGB')  # JPEG needs RGB
+
+            # Save optimized image
+            temp_image_path = Path(f"/tmp/page_{i}.jpg")
+            optimized_image.save(temp_image_path, "JPEG", quality=85, optimize=True)
 
             # Extract text from page using qwen-vl
             text, confidence = await extract_text_with_qwen_vl(temp_image_path)
@@ -256,7 +262,17 @@ async def ocr_document(request: OCRRequest) -> OCRResponse:
         if file_extension in ['.pdf']:
             raw_text, confidence = await extract_text_from_pdf(document_path)
         elif file_extension in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp']:
-            raw_text, confidence = await extract_text_with_qwen_vl(document_path)
+            # Optimize image before OCR
+            image = Image.open(document_path)
+            new_size = (int(image.size[0] * 0.7), int(image.size[1] * 0.7))
+            optimized_image = image.resize(new_size, Image.Resampling.LANCZOS)
+            optimized_image = optimized_image.convert('RGB')
+
+            temp_image_path = Path(f"/tmp/optimized_{document_path.stem}.jpg")
+            optimized_image.save(temp_image_path, "JPEG", quality=85, optimize=True)
+
+            raw_text, confidence = await extract_text_with_qwen_vl(temp_image_path)
+            temp_image_path.unlink()  # Clean up
         else:
             raise HTTPException(
                 status_code=400,
