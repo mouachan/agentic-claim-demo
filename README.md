@@ -2,35 +2,7 @@
 
 An intelligent insurance claims processing system powered by AI agents, demonstrating advanced document processing, policy retrieval, and automated decision-making capabilities using Model Context Protocol (MCP) and LlamaStack.
 
-## 🚨 Important Notes - Current Deployment Status
-
-### Active Branch: `main` vs `http-response-api`
-
-This repository has **TWO active branches** with different LlamaStack integration approaches:
-
-| Branch | Integration | Status | Use Case |
-|--------|-------------|---------|----------|
-| **`main`** | `llama-stack-client` SDK (ReActAgent) | ⚠️ **Known Issues** | Testing latest SDK features |
-| **`http-response-api`** | Direct HTTP API calls | ✅ **Stable & Recommended** | Production deployments |
-
-**Current Issues on `main` branch:**
-- ⚠️ LlamaStack SDK 0.3.0rc3 has memory leaks in EventLogger
-- ⚠️ MCP tool calls fail with `Field required: input` error
-- ⚠️ Vector store insertion only keeps last batch (overwrites previous data)
-
-**`http-response-api` branch improvements:**
-- ✅ MCP servers rewritten to JSON-RPC 2.0 protocol (SSE-based messaging)
-- ✅ LlamaStack configuration fixed (vLLM URLs with `/v1` suffix, `provider_model_id` fields)
-- ⚠️ **Critical**: LlamaStack 0.3.0rc3+rhai0 has a bug preventing MCP tool execution
-  - Bug fixed upstream in PR #3385 (Oct 27, 2025)
-  - Fix available from llama-stack v0.3.1+
-  - RHOAI 0.3.0rc3+rhai0 is a Release Candidate BEFORE the fix
-  - MCP tools are discovered but never called by the Responses API
-  - Waiting for RHOAI operator to upgrade to v0.3.1+
-
-📖 **See [`BRANCHES.md`](BRANCHES.md) for detailed comparison and migration guide.**
-
-### Embedding Model Configuration
+## Embedding Model Configuration
 
 The system now uses **Gemma-300m** (768-dim) for generating embeddings instead of Granite-125m:
 
