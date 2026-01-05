@@ -29,7 +29,10 @@ app = FastAPI(
 
 # Configuration
 LLAMASTACK_ENDPOINT = os.getenv("LLAMASTACK_ENDPOINT", "http://localhost:8321")
-VECTOR_DB_ID = "claims_vector_db"
+VECTOR_STORE_NAME = os.getenv("VECTOR_STORE_NAME", "claims_vector_db")
+
+# Global vector_store_id (retrieved at startup)
+_vector_store_id: Optional[str] = None
 
 
 # Pydantic models
@@ -91,6 +94,35 @@ class HealthResponse(BaseModel):
 
 
 # Helper functions
+async def get_vector_store_id() -> str:
+    """Get vector_store_id by name from LlamaStack."""
+    global _vector_store_id
+
+    if _vector_store_id:
+        return _vector_store_id
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{LLAMASTACK_ENDPOINT}/v1/vector_stores",
+                params={"name": VECTOR_STORE_NAME}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("data") and len(data["data"]) > 0:
+                    _vector_store_id = data["data"][0]["id"]
+                    logger.info(f"Retrieved vector_store_id: {_vector_store_id}")
+                    return _vector_store_id
+                else:
+                    raise ValueError(f"Vector store '{VECTOR_STORE_NAME}' not found")
+            else:
+                raise Exception(f"Failed to get vector_store: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error getting vector_store_id: {str(e)}")
+        raise
+
+
 async def vector_search_llamastack(
     query: str,
     collection: str,
@@ -102,21 +134,51 @@ async def vector_search_llamastack(
     LlamaStack handles embedding creation and vector search.
     """
     try:
+        vector_store_id = await get_vector_store_id()
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{LLAMASTACK_ENDPOINT}/vector_io/search",
+                f"{LLAMASTACK_ENDPOINT}/v1/vector-io/query",
                 json={
-                    "vector_db_id": VECTOR_DB_ID,
-                    "collection": collection,
-                    "query_text": query,
+                    "vector_db_id": vector_store_id,
+                    "query": query,
                     "k": top_k,
-                    "filters": filters or {}
+                    # Note: LlamaStack doesn't support collection/filters in query params yet
+                    # We filter results by metadata after retrieval
                 }
             )
 
             if response.status_code == 200:
                 result = response.json()
-                return result.get("results", [])
+                chunks = result.get("chunks", [])
+
+                # Filter by collection and other filters
+                filtered_chunks = []
+                for chunk in chunks:
+                    metadata = chunk.get("metadata", {})
+
+                    # Check collection
+                    if metadata.get("collection") != collection:
+                        continue
+
+                    # Check filters
+                    if filters:
+                        match = True
+                        for key, value in filters.items():
+                            if metadata.get(key) != value:
+                                match = False
+                                break
+                        if not match:
+                            continue
+
+                    filtered_chunks.append({
+                        "id": metadata.get("id"),
+                        "text": chunk.get("content", ""),
+                        "score": chunk.get("score", 0.0),
+                        "metadata": metadata
+                    })
+
+                return filtered_chunks[:top_k]
             else:
                 logger.error(f"LlamaStack vector search error: {response.status_code} - {response.text}")
                 raise HTTPException(

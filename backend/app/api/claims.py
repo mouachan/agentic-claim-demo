@@ -135,10 +135,7 @@ async def process_claim(
     """
     import time
     import json
-    from llama_stack_client import LlamaStackClient
-    from llama_stack_client.lib.agents.react.agent import ReActAgent
-    from llama_stack_client.lib.agents.react.tool_parser import ReActOutput
-    from llama_stack_client.lib.agents.event_logger import EventLogger
+    import httpx
     import llama_stack_client
     from app.llamastack.prompts import CLAIMS_PROCESSING_AGENT_INSTRUCTIONS
 
@@ -154,9 +151,6 @@ async def process_claim(
         # Update status to processing
         claim.status = models.ClaimStatus.processing
         await db.commit()
-
-        # Get LlamaStack client
-        client = LlamaStackClient(base_url=settings.llamastack_endpoint)
 
         # Track processing start time
         start_time = time.time()
@@ -177,18 +171,8 @@ async def process_claim(
                     "server_url": "http://rag-server.claims-demo.svc.cluster.local:8080/sse"
                 })
 
-            # Create ReActAgent
-            agent = ReActAgent(
-                client=client,
-                model=settings.llamastack_default_model,
-                tools=tools,
-                instructions=CLAIMS_PROCESSING_AGENT_INSTRUCTIONS,
-            )
-
-            # Create session
-            session_id = agent.create_session(f"claim_{claim_id}")
-
-            # Prepare user message for the agent
+            # Call LlamaStack Agents API directly (avoid EventLogger OOM)
+            # Prepare user message
             user_message = f"""
 Process this insurance claim:
 
@@ -209,22 +193,48 @@ Workflow configuration:
 - Enable RAG retrieval: {process_request.enable_rag}
 """
 
-            # Run agent turn
-            response = agent.create_turn(
-                messages=[{"role": "user", "content": user_message}],
-                session_id=session_id,
-                stream=False,
-            )
+            # Create session via API
+            async with httpx.AsyncClient(timeout=120.0) as http_client:
+                # Create conversation
+                conv_response = await http_client.post(
+                    f"{settings.llamastack_endpoint}/v1/conversations",
+                    json={"name": f"claim_{claim_id}"}
+                )
+                conv_data = conv_response.json()
+                conversation_id = conv_data.get("conversation_id")
 
-            # Parse response
-            final_content = None
-            for log in EventLogger().log(response):
-                if hasattr(log, 'role') and log.role == "assistant":
-                    final_content = str(log)
+                logger.info(f"Created conversation: {conversation_id}")
 
-            final_response = final_content
+                # Call agent with tools
+                agent_response = await http_client.post(
+                    f"{settings.llamastack_endpoint}/v1/responses",
+                    json={
+                        "model": settings.llamastack_default_model,
+                        "conversation_id": conversation_id,
+                        "messages": [
+                            {"role": "system", "content": CLAIMS_PROCESSING_AGENT_INSTRUCTIONS},
+                            {"role": "user", "content": user_message}
+                        ],
+                        "tools": tools,
+                        "stream": False
+                    }
+                )
 
-            if not final_response or final_response == "No response from agent":
+                response_data = agent_response.json()
+                logger.info(f"Agent response status: {agent_response.status_code}")
+
+                # Extract final response
+                if "choices" in response_data:
+                    final_response = response_data["choices"][0]["message"]["content"]
+                elif "message" in response_data:
+                    final_response = response_data["message"]["content"]
+                elif "content" in response_data:
+                    final_response = response_data["content"]
+                else:
+                    logger.error(f"Unexpected response format: {response_data}")
+                    final_response = str(response_data)
+
+            if not final_response:
                 raise ValueError("Agent did not provide a final response")
 
             # Parse the agent's decision (expecting JSON in the response)
