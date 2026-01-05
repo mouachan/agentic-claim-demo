@@ -1,11 +1,6 @@
 """
-MCP RAG Server - Model Context Protocol server with SSE for RAG operations
-
-This server exposes RAG (Retrieval-Augmented Generation) functionality via MCP using SSE.
-LlamaStack connects to /sse to discover 3 tools:
-- retrieve_user_info
-- retrieve_similar_claims
-- search_knowledge_base
+MCP RAG Server - Model Context Protocol server with SSE
+FIXED: Uses proper MCP JSON-RPC 2.0 protocol
 """
 
 import asyncio
@@ -13,12 +8,12 @@ import json
 import logging
 import os
 import time
+import uuid
 from typing import Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sse_starlette.sse import EventSourceResponse
 
 from server import (
     retrieve_user_info,
@@ -37,415 +32,409 @@ logger = logging.getLogger(__name__)
 # FastAPI app
 app = FastAPI(
     title="MCP RAG Server",
-    description="Model Context Protocol server for RAG operations with SSE",
-    version="2.0.0",
+    description="Model Context Protocol server for RAG operations",
+    version="3.0.0",
 )
 
-# MCP Tool Definitions
+# MCP Tool Definitions (MCP Standard format)
 MCP_TOOLS = [
     {
-        "type": "function",
-        "function": {
-            "name": "retrieve_user_info",
-            "description": "Retrieve user information and insurance contracts using vector similarity search. Returns user profile data and relevant contract documents based on the query.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "user_id": {
-                        "type": "string",
-                        "description": "User identifier (UUID or user ID)"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Search query to find relevant user contracts (e.g., 'medical coverage', 'emergency services')"
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "default": 5,
-                        "minimum": 1,
-                        "maximum": 20,
-                        "description": "Number of contracts to retrieve"
-                    },
-                    "include_contracts": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "Whether to include contract documents in results"
-                    }
+        "name": "retrieve_user_info",
+        "description": "Retrieve user information and insurance contracts using vector similarity search.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "description": "User identifier (UUID or user ID)"
                 },
-                "required": ["user_id", "query"]
-            }
+                "query": {
+                    "type": "string",
+                    "description": "Search query to find relevant user contracts"
+                },
+                "top_k": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Number of contracts to retrieve"
+                }
+            },
+            "required": ["user_id", "query"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "retrieve_similar_claims",
-            "description": "Find similar historical claims using vector similarity search. Helps identify precedents and patterns in claim processing. Returns claims with similar content, outcomes, and processing times.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "claim_text": {
-                        "type": "string",
-                        "description": "Text content of the current claim to find similar cases for"
-                    },
-                    "claim_type": {
-                        "type": "string",
-                        "description": "Optional filter by claim type (medical, auto, property, etc.)"
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "default": 10,
-                        "minimum": 1,
-                        "maximum": 50,
-                        "description": "Number of similar claims to retrieve"
-                    },
-                    "min_similarity": {
-                        "type": "number",
-                        "default": 0.7,
-                        "minimum": 0.0,
-                        "maximum": 1.0,
-                        "description": "Minimum similarity score threshold (0.0 to 1.0)"
-                    }
+        "name": "retrieve_similar_claims",
+        "description": "Find similar historical claims using vector similarity search.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "claim_text": {
+                    "type": "string",
+                    "description": "Text content of the current claim"
                 },
-                "required": ["claim_text"]
-            }
+                "claim_type": {
+                    "type": "string",
+                    "description": "Optional filter by claim type"
+                },
+                "top_k": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Number of similar claims to retrieve"
+                },
+                "min_similarity": {
+                    "type": "number",
+                    "default": 0.7,
+                    "description": "Minimum similarity score threshold"
+                }
+            },
+            "required": ["claim_text"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "search_knowledge_base",
-            "description": "Search the knowledge base for policy information, guidelines, and rules. Uses vector search to find relevant documents and synthesizes an answer using LLM.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query for knowledge base (e.g., 'what is covered under emergency medical services?')"
-                    },
-                    "filters": {
-                        "type": "object",
-                        "description": "Optional filters for search (category, tags, etc.)"
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "default": 5,
-                        "minimum": 1,
-                        "maximum": 20,
-                        "description": "Number of knowledge base articles to retrieve"
-                    }
+        "name": "search_knowledge_base",
+        "description": "Search the knowledge base for policy information and guidelines.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query for knowledge base"
                 },
-                "required": ["query"]
-            }
+                "top_k": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Number of articles to retrieve"
+                }
+            },
+            "required": ["query"]
         }
     }
 ]
 
+# Server info for MCP
+SERVER_INFO = {
+    "name": "rag-server",
+    "version": "3.0.0",
+    "protocolVersion": "2024-11-05"
+}
 
-# Pydantic Models
-class RetrieveUserInfoRequest(BaseModel):
-    user_id: str
-    query: str
-    top_k: int = Field(default=5, ge=1, le=20)
-    include_contracts: bool = True
-
-
-class RetrieveSimilarClaimsRequest(BaseModel):
-    claim_text: str
-    claim_type: Optional[str] = None
-    top_k: int = Field(default=10, ge=1, le=50)
-    min_similarity: float = Field(default=0.7, ge=0.0, le=1.0)
-
-
-class SearchKnowledgeBaseRequest(BaseModel):
-    query: str
-    filters: Optional[Dict[str, Any]] = None
-    top_k: int = Field(default=5, ge=1, le=20)
-
-
-class HealthResponse(BaseModel):
-    status: str
-    service: str
-    version: str
-    mcp_protocol: str
-    tools_count: int
-    database_connected: bool = False
+SERVER_CAPABILITIES = {
+    "tools": {"listChanged": False}
+}
 
 
 # ============================================================================
-# MCP PROTOCOL ENDPOINTS (SSE)
+# MCP JSON-RPC MESSAGE HANDLING
 # ============================================================================
+
+async def handle_jsonrpc_message(message: dict) -> dict:
+    """
+    Handle incoming JSON-RPC 2.0 messages from MCP client.
+    """
+    method = message.get("method", "")
+    msg_id = message.get("id")
+    params = message.get("params", {})
+
+    logger.info(f"MCP Request: method={method}, id={msg_id}")
+
+    try:
+        # Initialize
+        if method == "initialize":
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "serverInfo": SERVER_INFO,
+                    "capabilities": SERVER_CAPABILITIES
+                }
+            }
+
+        # List tools
+        elif method == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "tools": MCP_TOOLS
+                }
+            }
+
+        # Call tool
+        elif method == "tools/call":
+            tool_name = params.get("name")
+            arguments = params.get("arguments", {})
+
+            result = await execute_tool(tool_name, arguments)
+
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(result, default=str)
+                        }
+                    ]
+                }
+            }
+
+        # Ping (keep-alive)
+        elif method == "ping":
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {}
+            }
+
+        # Notifications (no response needed)
+        elif method == "notifications/initialized":
+            logger.info("MCP client initialized")
+            return None  # No response for notifications
+
+        else:
+            logger.warning(f"Unknown MCP method: {method}")
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32601,
+                    "message": f"Method not found: {method}"
+                }
+            }
+
+    except Exception as e:
+        logger.error(f"Error handling MCP message: {e}")
+        return {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {
+                "code": -32603,
+                "message": str(e)
+            }
+        }
+
+
+async def execute_tool(tool_name: str, arguments: dict) -> dict:
+    """Execute a tool and return the result."""
+    logger.info(f"Executing tool: {tool_name} with args: {arguments}")
+
+    try:
+        if tool_name == "retrieve_user_info":
+            request = RetrieveUserInfoRequest(
+                user_id=arguments["user_id"],
+                query=arguments["query"],
+                top_k=arguments.get("top_k", 5)
+            )
+            result = await retrieve_user_info(request)
+            return result.model_dump()
+
+        elif tool_name == "retrieve_similar_claims":
+            request = RetrieveSimilarClaimsRequest(
+                claim_text=arguments["claim_text"],
+                claim_type=arguments.get("claim_type"),
+                top_k=arguments.get("top_k", 10),
+                min_similarity=arguments.get("min_similarity", 0.7)
+            )
+            result = await retrieve_similar_claims(request)
+            return result.model_dump()
+
+        elif tool_name == "search_knowledge_base":
+            request = SearchKnowledgeBaseRequest(
+                query=arguments["query"],
+                top_k=arguments.get("top_k", 5)
+            )
+            result = await search_knowledge_base(request)
+            return result.model_dump()
+
+        else:
+            raise ValueError(f"Unknown tool: {tool_name}")
+
+    except Exception as e:
+        logger.error(f"Tool execution error: {e}")
+        raise
+
+
+# ============================================================================
+# SSE ENDPOINT (MCP Standard)
+# ============================================================================
+
+# Store for pending messages per session
+pending_messages: Dict[str, asyncio.Queue] = {}
+
 
 @app.get("/sse")
-async def mcp_sse_endpoint():
+async def mcp_sse_endpoint(request: Request):
     """
-    Server-Sent Events endpoint for MCP protocol.
+    SSE endpoint for MCP protocol.
 
-    LlamaStack connects here to:
-    1. Discover 3 RAG tools
-    2. Maintain persistent connection
-    3. Receive updates when tools change
+    This endpoint:
+    1. Creates a unique session
+    2. Sends the session endpoint URL
+    3. Waits for JSON-RPC responses to send back
     """
-    logger.info("LlamaStack connected to MCP SSE endpoint")
+    session_id = str(uuid.uuid4())
+    pending_messages[session_id] = asyncio.Queue()
+
+    logger.info(f"MCP SSE connection opened: session={session_id}")
 
     async def event_generator():
-        """Generate SSE events for MCP protocol."""
         try:
-            # 1. Send tools list on connection
-            yield {
-                "event": "tools",
-                "data": json.dumps({
-                    "tools": MCP_TOOLS,
-                    "server_info": {
-                        "name": "rag-server",
-                        "version": "2.0.0",
-                        "protocol": "mcp-sse",
-                        "capabilities": ["vector_search", "embeddings", "llm_synthesis"],
-                        "database": "postgresql+pgvector"
-                    }
-                })
-            }
-            logger.info(f"Sent {len(MCP_TOOLS)} tools to LlamaStack")
+            # Send endpoint URL for POST messages
+            # LlamaStack will POST JSON-RPC messages to this URL
+            base_url = str(request.base_url).rstrip("/")
+            endpoint_url = f"{base_url}/sse/message?session_id={session_id}"
 
-            # 2. Keep-alive loop (ping every 30 seconds)
+            yield f"event: endpoint\ndata: {endpoint_url}\n\n"
+            logger.info(f"Sent endpoint URL: {endpoint_url}")
+
+            # Wait for and send responses
             while True:
-                await asyncio.sleep(30)
-                yield {
-                    "event": "ping",
-                    "data": json.dumps({
-                        "status": "alive",
-                        "timestamp": time.time(),
-                        "tools_count": len(MCP_TOOLS)
-                    })
-                }
-                logger.debug("Sent keep-alive ping to LlamaStack")
+                try:
+                    # Wait for messages with timeout for keep-alive
+                    message = await asyncio.wait_for(
+                        pending_messages[session_id].get(),
+                        timeout=30.0
+                    )
+                    yield f"event: message\ndata: {json.dumps(message)}\n\n"
+                    logger.debug(f"Sent SSE message: {message.get('id', 'notification')}")
+
+                except asyncio.TimeoutError:
+                    # Send keep-alive comment
+                    yield ": keep-alive\n\n"
 
         except asyncio.CancelledError:
-            logger.info("LlamaStack disconnected from MCP SSE endpoint")
-            raise
-        except Exception as e:
-            logger.error(f"Error in SSE event generator: {str(e)}")
-            raise
+            logger.info(f"MCP SSE connection closed: session={session_id}")
+        finally:
+            # Cleanup
+            if session_id in pending_messages:
+                del pending_messages[session_id]
 
-    return EventSourceResponse(
+    return StreamingResponse(
         event_generator(),
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.post("/sse/message")
+async def mcp_message_endpoint(request: Request, session_id: str):
+    """
+    Receive JSON-RPC messages from MCP client.
+
+    LlamaStack POSTs JSON-RPC requests here, and we queue responses
+    to be sent via the SSE stream.
+    """
+    if session_id not in pending_messages:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        body = await request.json()
+        logger.info(f"Received MCP message: {body.get('method', 'unknown')}")
+
+        # Handle the JSON-RPC message
+        response = await handle_jsonrpc_message(body)
+
+        # Queue response for SSE stream (if not a notification)
+        if response is not None:
+            await pending_messages[session_id].put(response)
+
+        return JSONResponse({"status": "accepted"})
+
+    except Exception as e:
+        logger.error(f"Error processing MCP message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ALTERNATIVE: SIMPLE SSE (for clients that don't support full MCP)
+# ============================================================================
+
+@app.get("/sse/simple")
+async def simple_sse_endpoint():
+    """
+    Simplified SSE that just lists tools on connection.
+    Some MCP clients may work better with this simpler approach.
+    """
+    logger.info("Simple SSE connection opened")
+
+    async def event_generator():
+        try:
+            # Send tools immediately
+            tools_message = {
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "result": {"tools": MCP_TOOLS}
+            }
+            yield f"event: message\ndata: {json.dumps(tools_message)}\n\n"
+
+            # Keep-alive loop
+            while True:
+                await asyncio.sleep(30)
+                yield ": keep-alive\n\n"
+
+        except asyncio.CancelledError:
+            logger.info("Simple SSE connection closed")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
             "Connection": "keep-alive"
         }
     )
 
 
 # ============================================================================
-# TOOL EXECUTION ENDPOINTS
-# ============================================================================
-
-@app.post("/mcp/tools/retrieve_user_info")
-async def execute_retrieve_user_info(request: RetrieveUserInfoRequest) -> JSONResponse:
-    """
-    Execute retrieve_user_info tool.
-
-    Called by LlamaStack when agent needs user information and contracts.
-    """
-    logger.info(f"Executing retrieve_user_info for user: {request.user_id}")
-
-    try:
-        result = await retrieve_user_info(request)
-
-        logger.info(f"Retrieved {len(result.contracts)} contracts for user {request.user_id}")
-
-        return JSONResponse(content=result.model_dump(), status_code=200)
-
-    except Exception as e:
-        logger.error(f"Error executing retrieve_user_info: {str(e)}")
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
-
-
-@app.post("/mcp/tools/retrieve_similar_claims")
-async def execute_retrieve_similar_claims(request: RetrieveSimilarClaimsRequest) -> JSONResponse:
-    """
-    Execute retrieve_similar_claims tool.
-
-    Called by LlamaStack when agent needs to find similar historical claims.
-    """
-    logger.info(f"Executing retrieve_similar_claims (query length: {len(request.claim_text)} chars)")
-
-    try:
-        result = await retrieve_similar_claims(request)
-
-        logger.info(f"Found {len(result.similar_claims)} similar claims")
-
-        return JSONResponse(content=result.model_dump(), status_code=200)
-
-    except Exception as e:
-        logger.error(f"Error executing retrieve_similar_claims: {str(e)}")
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
-
-
-@app.post("/mcp/tools/search_knowledge_base")
-async def execute_search_knowledge_base(request: SearchKnowledgeBaseRequest) -> JSONResponse:
-    """
-    Execute search_knowledge_base tool.
-
-    Called by LlamaStack when agent needs policy information from knowledge base.
-    """
-    logger.info(f"Executing search_knowledge_base: {request.query}")
-
-    try:
-        result = await search_knowledge_base(request)
-
-        logger.info(f"Found {len(result.results)} knowledge base articles")
-
-        return JSONResponse(content=result.model_dump(), status_code=200)
-
-    except Exception as e:
-        logger.error(f"Error executing search_knowledge_base: {str(e)}")
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
-
-
-# ============================================================================
-# BACKWARD COMPATIBILITY (Legacy HTTP endpoints)
-# ============================================================================
-
-@app.post("/retrieve_user_info")
-async def legacy_retrieve_user_info(request: RetrieveUserInfoRequest) -> JSONResponse:
-    """Legacy endpoint for backward compatibility."""
-    logger.warning("Legacy /retrieve_user_info endpoint called. Consider migrating to LlamaStack Agents API.")
-    return await execute_retrieve_user_info(request)
-
-
-@app.post("/retrieve_similar_claims")
-async def legacy_retrieve_similar_claims(request: RetrieveSimilarClaimsRequest) -> JSONResponse:
-    """Legacy endpoint for backward compatibility."""
-    logger.warning("Legacy /retrieve_similar_claims endpoint called. Consider migrating to LlamaStack Agents API.")
-    return await execute_retrieve_similar_claims(request)
-
-
-@app.post("/search_knowledge_base")
-async def legacy_search_knowledge_base(request: SearchKnowledgeBaseRequest) -> JSONResponse:
-    """Legacy endpoint for backward compatibility."""
-    logger.warning("Legacy /search_knowledge_base endpoint called. Consider migrating to LlamaStack Agents API.")
-    return await execute_search_knowledge_base(request)
-
-
-# ============================================================================
 # HEALTH & INFO ENDPOINTS
 # ============================================================================
 
-@app.get("/health/live", response_model=HealthResponse)
+@app.get("/health/live")
 async def liveness():
-    """Kubernetes liveness probe."""
-    return HealthResponse(
-        status="alive",
-        service="mcp-rag-server",
-        version="2.0.0",
-        mcp_protocol="sse",
-        tools_count=len(MCP_TOOLS),
-        database_connected=False
-    )
+    return {"status": "alive", "service": "mcp-rag-server", "version": "3.0.0"}
 
 
-@app.get("/health/ready", response_model=HealthResponse)
+@app.get("/health/ready")
 async def readiness():
-    """
-    Kubernetes readiness probe.
-
-    Checks LlamaStack connection before marking as ready.
-    """
     try:
         import httpx
-
-        # Test LlamaStack connection
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{LLAMASTACK_ENDPOINT}/v1/models")
-
-            if response.status_code != 200:
-                raise Exception(f"LlamaStack returned status {response.status_code}")
-
-        return HealthResponse(
-            status="ready",
-            service="mcp-rag-server",
-            version="2.0.0",
-            mcp_protocol="sse",
-            tools_count=len(MCP_TOOLS),
-            database_connected=True  # Via LlamaStack
-        )
-
-    except Exception as e:
-        logger.error(f"Readiness check failed: {str(e)}")
-        raise HTTPException(
-            status_code=503,
-            detail=f"LlamaStack not ready: {str(e)}"
-        )
+            response = await client.get(f"{LLAMASTACK_ENDPOINT}/v1/health")
+            if response.status_code == 200:
+                return {"status": "ready", "service": "mcp-rag-server"}
+    except:
+        pass
+    raise HTTPException(status_code=503, detail="LlamaStack not ready")
 
 
 @app.get("/")
 async def root():
-    """Root endpoint with server information."""
     return {
         "service": "MCP RAG Server",
-        "version": "2.0.0",
-        "protocol": "Model Context Protocol (MCP) with SSE",
-        "status": "running",
+        "version": "3.0.0",
+        "protocol": "MCP JSON-RPC 2.0 over SSE",
         "endpoints": {
-            "mcp_sse": "/sse",
-            "tool_execution": "/mcp/tools/{tool_name}",
-            "health_live": "/health/live",
-            "health_ready": "/health/ready"
+            "sse": "/sse (full MCP protocol)",
+            "sse_simple": "/sse/simple (simplified)",
+            "message": "/sse/message?session_id=X (POST JSON-RPC)"
         },
-        "tools": [tool["function"]["name"] for tool in MCP_TOOLS],
-        "tools_detail": MCP_TOOLS,
-        "database": {
-            "type": "PostgreSQL + pgvector",
-            "vector_dimension": 768,
-            "embedding_model": "granite-embedding-125m"
-        },
-        "documentation": {
-            "mcp_protocol": "Connect to /sse to discover tools via Server-Sent Events",
-            "tool_execution": "POST to /mcp/tools/{tool_name} to execute RAG operations",
-            "example": {
-                "discover_tools": "curl -N http://rag-server:8080/sse",
-                "retrieve_user": "curl -X POST http://rag-server:8080/mcp/tools/retrieve_user_info -d '{\"user_id\": \"...\", \"query\": \"...\"}'",
-                "similar_claims": "curl -X POST http://rag-server:8080/mcp/tools/retrieve_similar_claims -d '{\"claim_text\": \"...\"}'"
-            }
-        }
+        "tools": [t["name"] for t in MCP_TOOLS]
     }
 
 
 @app.get("/mcp/tools")
 async def list_tools():
-    """
-    List all available MCP tools.
-
-    Alternative to SSE for simple tool discovery (non-streaming).
-    """
-    return {
-        "tools": MCP_TOOLS,
-        "count": len(MCP_TOOLS)
-    }
+    """REST endpoint to list tools (for debugging)."""
+    return {"tools": MCP_TOOLS, "count": len(MCP_TOOLS)}
 
 
 if __name__ == "__main__":
     import uvicorn
-
     port = int(os.getenv("PORT", "8080"))
     logger.info(f"Starting MCP RAG Server on port {port}")
-    logger.info(f"MCP SSE endpoint: http://0.0.0.0:{port}/sse")
-    logger.info(f"Tools available: {[t['function']['name'] for t in MCP_TOOLS]}")
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=port,
-        log_level=os.getenv("LOG_LEVEL", "info").lower()
-    )
+    uvicorn.run(app, host="0.0.0.0", port=port)

@@ -1,23 +1,24 @@
 """
-MCP OCR Server - Model Context Protocol server with SSE for OCR processing
-
-This server exposes OCR functionality via the MCP (Model Context Protocol) using Server-Sent Events (SSE).
-LlamaStack connects to the /mcp/sse endpoint to discover available tools.
+MCP OCR Server - Model Context Protocol server with SSE
+FIXED: Uses proper MCP JSON-RPC 2.0 protocol
 """
 
 import asyncio
 import json
 import logging
 import os
-import time
-from typing import Dict, Any
+import uuid
+from typing import Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sse_starlette.sse import EventSourceResponse
 
-from server import ocr_document, OCRRequest
+from server import (
+    ocr_document,
+    OCRRequest,
+    LLAMASTACK_ENDPOINT
+)
 
 # Configure logging
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -26,291 +27,352 @@ logger = logging.getLogger(__name__)
 # FastAPI app
 app = FastAPI(
     title="MCP OCR Server",
-    description="Model Context Protocol server for OCR processing with SSE",
-    version="2.0.0",
+    description="Model Context Protocol server for OCR operations",
+    version="3.0.0",
 )
 
-# MCP Tool Definitions
+# MCP Tool Definitions (MCP Standard format)
 MCP_TOOLS = [
     {
-        "type": "function",
-        "function": {
-            "name": "ocr_document",
-            "description": "Extract text from document images or PDFs using OCR and validate with LLM. Supports multiple formats (PDF, JPG, PNG, TIFF) and languages. Returns structured data with confidence scores.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "document_path": {
-                        "type": "string",
-                        "description": "Absolute path to the document file (PDF, JPG, PNG, TIFF, BMP)"
-                    },
-                    "document_type": {
-                        "type": "string",
-                        "enum": ["claim_form", "invoice", "medical_record", "id_card", "other"],
-                        "default": "claim_form",
-                        "description": "Type of document to optimize field extraction"
-                    },
-                    "language": {
-                        "type": "string",
-                        "default": "eng",
-                        "description": "OCR language code (eng, fra, spa, deu, etc.)"
-                    }
+        "name": "ocr_document",
+        "description": "Extract text and structured data from insurance claim documents using OCR. Supports PDF, JPG, PNG, and TIFF formats.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "document_path": {
+                    "type": "string",
+                    "description": "Path to the document file (PDF, image, etc.)"
                 },
-                "required": ["document_path"]
-            }
+                "document_type": {
+                    "type": "string",
+                    "enum": ["claim_form", "invoice", "medical_record", "id_card", "other"],
+                    "default": "claim_form",
+                    "description": "Type of document to optimize OCR processing"
+                },
+                "extract_structured": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Whether to extract structured data (dates, amounts, names) using LLM"
+                },
+                "language": {
+                    "type": "string",
+                    "default": "eng",
+                    "description": "OCR language code (eng, fra, deu, etc.)"
+                }
+            },
+            "required": ["document_path"]
         }
     }
 ]
 
+# Server info for MCP
+SERVER_INFO = {
+    "name": "ocr-server",
+    "version": "3.0.0",
+    "protocolVersion": "2024-11-05"
+}
 
-# Pydantic Models
-class ToolExecutionRequest(BaseModel):
-    """Request model for tool execution."""
-    document_path: str = Field(..., description="Path to document file")
-    document_type: str = Field(default="claim_form", description="Type of document")
-    language: str = Field(default="eng", description="OCR language code")
-
-
-class HealthResponse(BaseModel):
-    """Health check response."""
-    status: str
-    service: str
-    version: str
-    mcp_protocol: str
-    tools_count: int
+SERVER_CAPABILITIES = {
+    "tools": {"listChanged": False}
+}
 
 
 # ============================================================================
-# MCP PROTOCOL ENDPOINTS (SSE)
+# MCP JSON-RPC MESSAGE HANDLING
 # ============================================================================
+
+async def handle_jsonrpc_message(message: dict) -> dict:
+    """
+    Handle incoming JSON-RPC 2.0 messages from MCP client.
+    """
+    method = message.get("method", "")
+    msg_id = message.get("id")
+    params = message.get("params", {})
+
+    logger.info(f"MCP Request: method={method}, id={msg_id}")
+
+    try:
+        # Initialize
+        if method == "initialize":
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "serverInfo": SERVER_INFO,
+                    "capabilities": SERVER_CAPABILITIES
+                }
+            }
+
+        # List tools
+        elif method == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "tools": MCP_TOOLS
+                }
+            }
+
+        # Call tool
+        elif method == "tools/call":
+            tool_name = params.get("name")
+            arguments = params.get("arguments", {})
+
+            result = await execute_tool(tool_name, arguments)
+
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(result, default=str)
+                        }
+                    ]
+                }
+            }
+
+        # Ping (keep-alive)
+        elif method == "ping":
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {}
+            }
+
+        # Notifications (no response needed)
+        elif method == "notifications/initialized":
+            logger.info("MCP client initialized")
+            return None  # No response for notifications
+
+        else:
+            logger.warning(f"Unknown MCP method: {method}")
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32601,
+                    "message": f"Method not found: {method}"
+                }
+            }
+
+    except Exception as e:
+        logger.error(f"Error handling MCP message: {e}")
+        return {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {
+                "code": -32603,
+                "message": str(e)
+            }
+        }
+
+
+async def execute_tool(tool_name: str, arguments: dict) -> dict:
+    """Execute a tool and return the result."""
+    logger.info(f"Executing tool: {tool_name} with args: {arguments}")
+
+    try:
+        if tool_name == "ocr_document":
+            request = OCRRequest(
+                document_path=arguments["document_path"],
+                document_type=arguments.get("document_type", "claim_form"),
+                extract_structured=arguments.get("extract_structured", True),
+                language=arguments.get("language", "eng")
+            )
+            result = await ocr_document(request)
+            return result.model_dump()
+
+        else:
+            raise ValueError(f"Unknown tool: {tool_name}")
+
+    except Exception as e:
+        logger.error(f"Tool execution error: {e}")
+        raise
+
+
+# ============================================================================
+# SSE ENDPOINT (MCP Standard)
+# ============================================================================
+
+# Store for pending messages per session
+pending_messages: Dict[str, asyncio.Queue] = {}
+
 
 @app.get("/sse")
-async def mcp_sse_endpoint():
+async def mcp_sse_endpoint(request: Request):
     """
-    Server-Sent Events endpoint for MCP protocol.
+    SSE endpoint for MCP protocol.
 
-    This endpoint is used by LlamaStack to:
-    1. Discover available tools (ocr_document)
-    2. Maintain a persistent connection (keep-alive)
-    3. Receive updates when tools change
-
-    LlamaStack connects here and receives a stream of events:
-    - event: tools (list of available tools)
-    - event: ping (keep-alive every 30 seconds)
-    - event: update (when tools are added/removed)
+    This endpoint:
+    1. Creates a unique session
+    2. Sends the session endpoint URL
+    3. Waits for JSON-RPC responses to send back
     """
-    logger.info("LlamaStack connected to MCP SSE endpoint")
+    session_id = str(uuid.uuid4())
+    pending_messages[session_id] = asyncio.Queue()
+
+    logger.info(f"MCP SSE connection opened: session={session_id}")
 
     async def event_generator():
-        """Generate SSE events for MCP protocol."""
         try:
-            # 1. Send tools list on connection
-            yield {
-                "event": "tools",
-                "data": json.dumps({
-                    "tools": MCP_TOOLS,
-                    "server_info": {
-                        "name": "ocr-server",
-                        "version": "2.0.0",
-                        "protocol": "mcp-sse",
-                        "capabilities": ["ocr", "pdf_processing", "llm_validation"]
-                    }
-                })
-            }
-            logger.info(f"Sent {len(MCP_TOOLS)} tools to LlamaStack")
+            # Send endpoint URL for POST messages
+            # LlamaStack will POST JSON-RPC messages to this URL
+            base_url = str(request.base_url).rstrip("/")
+            endpoint_url = f"{base_url}/sse/message?session_id={session_id}"
 
-            # 2. Keep-alive loop (ping every 30 seconds)
+            yield f"event: endpoint\ndata: {endpoint_url}\n\n"
+            logger.info(f"Sent endpoint URL: {endpoint_url}")
+
+            # Wait for and send responses
             while True:
-                await asyncio.sleep(30)
-                yield {
-                    "event": "ping",
-                    "data": json.dumps({
-                        "status": "alive",
-                        "timestamp": time.time(),
-                        "tools_count": len(MCP_TOOLS)
-                    })
-                }
-                logger.debug("Sent keep-alive ping to LlamaStack")
+                try:
+                    # Wait for messages with timeout for keep-alive
+                    message = await asyncio.wait_for(
+                        pending_messages[session_id].get(),
+                        timeout=30.0
+                    )
+                    yield f"event: message\ndata: {json.dumps(message)}\n\n"
+                    logger.debug(f"Sent SSE message: {message.get('id', 'notification')}")
+
+                except asyncio.TimeoutError:
+                    # Send keep-alive comment
+                    yield ": keep-alive\n\n"
 
         except asyncio.CancelledError:
-            logger.info("LlamaStack disconnected from MCP SSE endpoint")
-            raise
-        except Exception as e:
-            logger.error(f"Error in SSE event generator: {str(e)}")
-            raise
+            logger.info(f"MCP SSE connection closed: session={session_id}")
+        finally:
+            # Cleanup
+            if session_id in pending_messages:
+                del pending_messages[session_id]
 
-    return EventSourceResponse(
+    return StreamingResponse(
         event_generator(),
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.post("/sse/message")
+async def mcp_message_endpoint(request: Request, session_id: str):
+    """
+    Receive JSON-RPC messages from MCP client.
+
+    LlamaStack POSTs JSON-RPC requests here, and we queue responses
+    to be sent via the SSE stream.
+    """
+    if session_id not in pending_messages:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        body = await request.json()
+        logger.info(f"Received MCP message: {body.get('method', 'unknown')}")
+
+        # Handle the JSON-RPC message
+        response = await handle_jsonrpc_message(body)
+
+        # Queue response for SSE stream (if not a notification)
+        if response is not None:
+            await pending_messages[session_id].put(response)
+
+        return JSONResponse({"status": "accepted"})
+
+    except Exception as e:
+        logger.error(f"Error processing MCP message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ALTERNATIVE: SIMPLE SSE (for clients that don't support full MCP)
+# ============================================================================
+
+@app.get("/sse/simple")
+async def simple_sse_endpoint():
+    """
+    Simplified SSE that just lists tools on connection.
+    Some MCP clients may work better with this simpler approach.
+    """
+    logger.info("Simple SSE connection opened")
+
+    async def event_generator():
+        try:
+            # Send tools immediately
+            tools_message = {
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "result": {"tools": MCP_TOOLS}
+            }
+            yield f"event: message\ndata: {json.dumps(tools_message)}\n\n"
+
+            # Keep-alive loop
+            while True:
+                await asyncio.sleep(30)
+                yield ": keep-alive\n\n"
+
+        except asyncio.CancelledError:
+            logger.info("Simple SSE connection closed")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
             "Connection": "keep-alive"
         }
     )
 
 
 # ============================================================================
-# TOOL EXECUTION ENDPOINTS
-# ============================================================================
-
-@app.post("/mcp/tools/ocr_document")
-async def execute_ocr_document(request: ToolExecutionRequest) -> JSONResponse:
-    """
-    Execute the ocr_document tool.
-
-    Called by LlamaStack when an agent needs to perform OCR.
-
-    Args:
-        request: Tool execution parameters
-
-    Returns:
-        OCR result with raw text, structured data, and confidence score
-    """
-    logger.info(f"Executing ocr_document tool for: {request.document_path}")
-
-    try:
-        # Convert ToolExecutionRequest to OCRRequest
-        ocr_request = OCRRequest(
-            document_path=request.document_path,
-            document_type=request.document_type,
-            language=request.language
-        )
-
-        # Call the ocr_document function
-        result = await ocr_document(ocr_request)
-
-        logger.info(f"OCR completed with success: {result.success}")
-
-        return JSONResponse(
-            content=result.model_dump(),
-            status_code=200 if result.success else 500
-        )
-
-    except Exception as e:
-        logger.error(f"Error executing ocr_document: {str(e)}")
-        return JSONResponse(
-            content={
-                "success": False,
-                "raw_text": None,
-                "structured_data": None,
-                "confidence": 0.0,
-                "errors": [str(e)]
-            },
-            status_code=500
-        )
-
-
-# ============================================================================
-# BACKWARD COMPATIBILITY (Legacy HTTP endpoint)
-# ============================================================================
-
-@app.post("/ocr_document")
-async def legacy_ocr_document(request: ToolExecutionRequest) -> JSONResponse:
-    """
-    Legacy HTTP endpoint for backward compatibility.
-
-    This endpoint maintains compatibility with existing clients that call
-    the OCR server directly without going through LlamaStack.
-
-    New clients should use LlamaStack Agents API instead.
-    """
-    logger.warning("Legacy /ocr_document endpoint called. Consider migrating to LlamaStack Agents API.")
-    return await execute_ocr_document(request)
-
-
-# ============================================================================
 # HEALTH & INFO ENDPOINTS
 # ============================================================================
 
-@app.get("/health/live", response_model=HealthResponse)
+@app.get("/health/live")
 async def liveness():
-    """Kubernetes liveness probe."""
-    return HealthResponse(
-        status="alive",
-        service="mcp-ocr-server",
-        version="2.0.0",
-        mcp_protocol="sse",
-        tools_count=len(MCP_TOOLS)
-    )
+    return {"status": "alive", "service": "mcp-ocr-server", "version": "3.0.0"}
 
 
-@app.get("/health/ready", response_model=HealthResponse)
+@app.get("/health/ready")
 async def readiness():
-    """
-    Kubernetes readiness probe.
-
-    Checks that Tesseract OCR is available before marking as ready.
-    """
     try:
-        import pytesseract
-        pytesseract.get_tesseract_version()
-
-        return HealthResponse(
-            status="ready",
-            service="mcp-ocr-server",
-            version="2.0.0",
-            mcp_protocol="sse",
-            tools_count=len(MCP_TOOLS)
-        )
-    except Exception as e:
-        logger.error(f"Readiness check failed: {str(e)}")
-        raise HTTPException(
-            status_code=503,
-            detail=f"Tesseract not ready: {str(e)}"
-        )
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{LLAMASTACK_ENDPOINT}/v1/health")
+            if response.status_code == 200:
+                return {"status": "ready", "service": "mcp-ocr-server"}
+    except:
+        pass
+    raise HTTPException(status_code=503, detail="LlamaStack not ready")
 
 
 @app.get("/")
 async def root():
-    """Root endpoint with server information."""
     return {
         "service": "MCP OCR Server",
-        "version": "2.0.0",
-        "protocol": "Model Context Protocol (MCP) with SSE",
-        "status": "running",
+        "version": "3.0.0",
+        "protocol": "MCP JSON-RPC 2.0 over SSE",
         "endpoints": {
-            "mcp_sse": "/sse",
-            "tool_execution": "/mcp/tools/{tool_name}",
-            "health_live": "/health/live",
-            "health_ready": "/health/ready"
+            "sse": "/sse (full MCP protocol)",
+            "sse_simple": "/sse/simple (simplified)",
+            "message": "/sse/message?session_id=X (POST JSON-RPC)"
         },
-        "tools": [tool["function"]["name"] for tool in MCP_TOOLS],
-        "tools_detail": MCP_TOOLS,
-        "documentation": {
-            "mcp_protocol": "Connect to /sse to discover tools via Server-Sent Events",
-            "tool_execution": "POST to /mcp/tools/ocr_document to execute OCR",
-            "example": {
-                "discover_tools": "curl -N http://ocr-server:8080/sse",
-                "execute_tool": "curl -X POST http://ocr-server:8080/mcp/tools/ocr_document -d '{\"document_path\": \"/path/to/doc.pdf\"}'"
-            }
-        }
+        "tools": [t["name"] for t in MCP_TOOLS]
     }
 
 
 @app.get("/mcp/tools")
 async def list_tools():
-    """
-    List all available MCP tools.
-
-    Alternative to SSE for simple tool discovery (non-streaming).
-    """
-    return {
-        "tools": MCP_TOOLS,
-        "count": len(MCP_TOOLS)
-    }
+    """REST endpoint to list tools (for debugging)."""
+    return {"tools": MCP_TOOLS, "count": len(MCP_TOOLS)}
 
 
 if __name__ == "__main__":
     import uvicorn
-
     port = int(os.getenv("PORT", "8080"))
     logger.info(f"Starting MCP OCR Server on port {port}")
-    logger.info(f"MCP SSE endpoint: http://0.0.0.0:{port}/sse")
-    logger.info(f"Tools available: {[t['function']['name'] for t in MCP_TOOLS]}")
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=port,
-        log_level=os.getenv("LOG_LEVEL", "info").lower()
-    )
+    uvicorn.run(app, host="0.0.0.0", port=port)

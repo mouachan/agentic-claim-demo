@@ -18,6 +18,16 @@ This repository has **TWO active branches** with different LlamaStack integratio
 - ⚠️ MCP tool calls fail with `Field required: input` error
 - ⚠️ Vector store insertion only keeps last batch (overwrites previous data)
 
+**`http-response-api` branch improvements:**
+- ✅ MCP servers rewritten to JSON-RPC 2.0 protocol (SSE-based messaging)
+- ✅ LlamaStack configuration fixed (vLLM URLs with `/v1` suffix, `provider_model_id` fields)
+- ⚠️ **Critical**: LlamaStack 0.3.0rc3+rhai0 has a bug preventing MCP tool execution
+  - Bug fixed upstream in PR #3385 (Oct 27, 2025)
+  - Fix available from llama-stack v0.3.1+
+  - RHOAI 0.3.0rc3+rhai0 is a Release Candidate BEFORE the fix
+  - MCP tools are discovered but never called by the Responses API
+  - Waiting for RHOAI operator to upgrade to v0.3.1+
+
 📖 **See [`BRANCHES.md`](BRANCHES.md) for detailed comparison and migration guide.**
 
 ### Embedding Model Configuration
@@ -197,6 +207,25 @@ The system uses a **ReActAgent** (Reasoning and Acting) pattern:
 
 ## MCP Servers
 
+### MCP Protocol Implementation (JSON-RPC 2.0)
+
+Both OCR and RAG servers implement the **Model Context Protocol (MCP)** using JSON-RPC 2.0 over Server-Sent Events (SSE).
+
+**Protocol Flow**:
+1. **Client connects** to `/sse` endpoint → Receives unique session endpoint URL
+2. **Client POSTs** JSON-RPC messages to `/sse/message?session_id=<id>`
+3. **Server processes** message and queues response
+4. **Server sends** response via SSE stream
+
+**Supported JSON-RPC Methods**:
+- `initialize` → Returns server info and capabilities
+- `tools/list` → Returns available MCP tools
+- `tools/call` → Executes a tool with parameters
+- `ping` → Keep-alive heartbeat
+- `notifications/initialized` → Client ready signal (no response)
+
+**Session Management**: Each SSE connection gets a unique session with 30-second keep-alive.
+
 ### OCR Server
 **Endpoint**: `http://ocr-server.claims-demo.svc.cluster.local:8080/sse`
 
@@ -205,6 +234,10 @@ The system uses a **ReActAgent** (Reasoning and Acting) pattern:
   - Supports multiple document types (claim forms, invoices, medical records, ID cards)
   - Multi-language OCR support
   - LLM validation for accuracy
+
+**Health Endpoints**:
+- `GET /health/live` → Liveness probe
+- `GET /health/ready` → Readiness probe (checks LlamaStack connectivity)
 
 ### RAG Server
 **Endpoint**: `http://rag-server.claims-demo.svc.cluster.local:8080/sse`
@@ -215,6 +248,10 @@ The system uses a **ReActAgent** (Reasoning and Acting) pattern:
 - `search_knowledge_base`: Query policy information and guidelines
 
 **Vector Database**: PostgreSQL with pgvector extension for semantic search
+
+**Health Endpoints**:
+- `GET /health/live` → Liveness probe
+- `GET /health/ready` → Readiness probe (checks LlamaStack connectivity)
 
 ### Guardrails Server
 **Endpoint**: `http://claims-guardrails.claims-demo.svc.cluster.local:8080`
