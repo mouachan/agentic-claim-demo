@@ -2,6 +2,48 @@
 
 An intelligent insurance claims processing system powered by AI agents, demonstrating advanced document processing, policy retrieval, and automated decision-making capabilities using Model Context Protocol (MCP) and LlamaStack.
 
+## 🚨 Important Notes - Current Deployment Status
+
+### Active Branch: `main` vs `http-response-api`
+
+This repository has **TWO active branches** with different LlamaStack integration approaches:
+
+| Branch | Integration | Status | Use Case |
+|--------|-------------|---------|----------|
+| **`main`** | `llama-stack-client` SDK (ReActAgent) | ⚠️ **Known Issues** | Testing latest SDK features |
+| **`http-response-api`** | Direct HTTP API calls | ✅ **Stable & Recommended** | Production deployments |
+
+**Current Issues on `main` branch:**
+- ⚠️ LlamaStack SDK 0.3.0rc3 has memory leaks in EventLogger
+- ⚠️ MCP tool calls fail with `Field required: input` error
+- ⚠️ Vector store insertion only keeps last batch (overwrites previous data)
+
+📖 **See [`BRANCHES.md`](BRANCHES.md) for detailed comparison and migration guide.**
+
+### Embedding Model Configuration
+
+The system now uses **Gemma-300m** (768-dim) for generating embeddings instead of Granite-125m:
+
+- **Endpoint**: `https://embeddinggemma-300m-edg-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com`
+- **Vector Store**: LlamaStack with pgvector backend
+- **Configured in**: `openshift/configmaps/llama-stack-config.yaml`
+
+### RAG Architecture Clarification: Builtin vs Custom
+
+⚠️ **The system currently has TWO RAG implementations** (redundant):
+
+1. **`builtin::rag`** - LlamaStack's native RAG runtime
+   - Provider: `inline::rag-runtime` (built into LlamaStack)
+   - Directly queries pgvector database
+   - Simpler but less customizable
+
+2. **`mcp::rag-server`** - Custom MCP server
+   - Provider: `remote::model-context-protocol`
+   - Python FastAPI server with custom logic
+   - More flexible, allows custom filtering and synthesis
+
+**Recommendation**: Use **only ONE** approach. The custom MCP server provides more control for complex business logic.
+
 ## Architecture Overview
 
 This demo showcases an end-to-end agentic workflow for insurance claims processing using OpenShift AI and LlamaStack.
@@ -38,7 +80,8 @@ graph TB
 
         subgraph "MCP Servers - Namespace: claims-demo"
             OCR["📄 OCR MCP Server<br/>Document Processing<br/>Service: ocr-server:8080"]
-            RAG["🔍 RAG MCP Server<br/>Vector Retrieval<br/>Service: rag-server:8080"]
+            RAG["🔍 RAG MCP Server Custom<br/>Advanced Vector Retrieval<br/>Service: rag-server:8080"]
+            RAGBUILTIN["🔍 Builtin RAG Runtime<br/>LlamaStack Native<br/>inline::rag-runtime"]
         end
 
         subgraph "Data Layer - Namespace: claims-demo"
@@ -60,12 +103,16 @@ graph TB
     LS -.->|Optional Safety| LG
     LS -.->|Optional PII Check| GG
 
+    %% LlamaStack Builtin RAG (inline runtime)
+    LS -->|Builtin RAG Runtime| RAGBUILTIN
+    RAGBUILTIN -->|Direct pgvector Query| DB
+
     %% MCP Servers to AI Models
     OCR -->|Vision OCR| QWEN
     OCR -->|Text Validation| LLM
 
     %% MCP Servers to Data
-    RAG -->|Vector Search| DB
+    RAG -->|Custom Vector Search| DB
     OCR -.->|Store Results| DB
 
     %% Backend to Data
@@ -81,6 +128,7 @@ graph TB
     style GG fill:#fff9c4
     style OCR fill:#e3f2fd
     style RAG fill:#e3f2fd
+    style RAGBUILTIN fill:#ffeaa7
     style DB fill:#fce4ec
 ```
 

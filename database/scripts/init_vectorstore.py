@@ -31,23 +31,26 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "claims_pass")
 
 LLAMASTACK_ENDPOINT = os.getenv("LLAMASTACK_ENDPOINT", "http://claims-llamastack-service.claims-demo.svc.cluster.local:8321")
 VECTOR_STORE_NAME = "claims_vector_db"
-EMBEDDING_MODEL = "granite-embedding-125m"
+EMBEDDING_MODEL = "gemma-300m"
 EMBEDDING_DIMENSION = 768
 
 
 async def create_embedding(text: str, http_client: httpx.AsyncClient) -> List[float]:
-    """Generate embedding using LlamaStack."""
+    """Generate embedding using LlamaStack with gemma-300m model."""
     response = await http_client.post(
-        f"{LLAMASTACK_ENDPOINT}/inference/embeddings",
+        f"{LLAMASTACK_ENDPOINT}/v1/embeddings",
         json={
             "model": EMBEDDING_MODEL,
-            "content": text
+            "input": text
         }
     )
 
     if response.status_code == 200:
         result = response.json()
-        if "embedding" in result:
+        # OpenAI-compatible format: {"data": [{"embedding": [...]}]}
+        if "data" in result and len(result["data"]) > 0:
+            return result["data"][0]["embedding"]
+        elif "embedding" in result:
             return result["embedding"]
         elif "embeddings" in result and len(result["embeddings"]) > 0:
             return result["embeddings"][0]
@@ -151,16 +154,30 @@ async def main():
                 SELECT id, user_id, contract_number, contract_type, coverage_amount,
                        is_active, start_date, end_date, full_text, embedding
                 FROM user_contracts
-                WHERE embedding IS NOT NULL
             """)
 
-            print(f"Found {len(contracts)} contracts with embeddings")
+            print(f"Found {len(contracts)} contracts")
 
             contract_chunks = []
             for contract in contracts:
+                # Regenerate embeddings for all contracts (compatibility with gemma-300m)
+                print(f"  Generating embedding for contract: {contract['contract_number']}...")
+                embedding = await create_embedding(contract["full_text"], http_client)
+
+                # Convert embedding list to PostgreSQL vector format string
+                embedding_str = '[' + ','.join(str(x) for x in embedding) + ']'
+
+                # Update database
+                await conn.execute("""
+                    UPDATE user_contracts
+                    SET embedding = $1::vector, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $2
+                """, embedding_str, contract["id"])
+
                 chunk = {
                     "content": contract["full_text"],
                     "token_count": len(contract["full_text"].split()),
+                    "embedding": embedding,  # Include embedding for LlamaStack
                     "metadata": {
                         "collection": "user_contracts",
                         "id": str(contract["id"]),
@@ -173,8 +190,7 @@ async def main():
                 }
                 contract_chunks.append(chunk)
 
-            if contract_chunks:
-                await insert_chunks_to_vectorstore(vector_store_id, contract_chunks, http_client)
+            # Don't insert yet - collect all chunks first
 
             # ===== KNOWLEDGE BASE =====
             print("\n📚 Processing knowledge_base...")
@@ -188,23 +204,25 @@ async def main():
 
             kb_chunks = []
             for article in kb_articles:
-                # Generate embedding if missing
-                embedding = article["embedding"]
-                if not embedding:
-                    print(f"  Generating embedding for: {article['title'][:50]}...")
-                    text_for_embedding = f"{article['title']}\n\n{article['content']}"
-                    embedding = await create_embedding(text_for_embedding, http_client)
+                # Always regenerate embeddings for compatibility with gemma-300m
+                print(f"  Generating embedding for: {article['title'][:50]}...")
+                text_for_embedding = f"{article['title']}\n\n{article['content']}"
+                embedding = await create_embedding(text_for_embedding, http_client)
 
-                    # Update database
-                    await conn.execute("""
-                        UPDATE knowledge_base
-                        SET embedding = $1::vector, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = $2
-                    """, embedding, article["id"])
+                # Convert embedding list to PostgreSQL vector format string
+                embedding_str = '[' + ','.join(str(x) for x in embedding) + ']'
+
+                # Update database
+                await conn.execute("""
+                    UPDATE knowledge_base
+                    SET embedding = $1::vector, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $2
+                """, embedding_str, article["id"])
 
                 chunk = {
                     "content": article["content"],
                     "token_count": len(article["content"].split()),
+                    "embedding": embedding,  # Include embedding for LlamaStack
                     "metadata": {
                         "collection": "knowledge_base",
                         "id": str(article["id"]),
@@ -216,8 +234,7 @@ async def main():
                 }
                 kb_chunks.append(chunk)
 
-            if kb_chunks:
-                await insert_chunks_to_vectorstore(vector_store_id, kb_chunks, http_client)
+            # Don't insert yet - collect all chunks first
 
             # ===== CLAIM DOCUMENTS (if any exist) =====
             print("\n📄 Processing claim_documents...")
@@ -247,8 +264,16 @@ async def main():
                 }
                 claim_chunks.append(chunk)
 
-            if claim_chunks:
-                await insert_chunks_to_vectorstore(vector_store_id, claim_chunks, http_client)
+            # ===== INSERT ALL CHUNKS AT ONCE =====
+            print("\n📦 Combining all chunks for insertion...")
+            all_chunks = contract_chunks + kb_chunks + claim_chunks
+            print(f"Total chunks to insert: {len(all_chunks)}")
+
+            if all_chunks:
+                print(f"📤 Inserting {len(all_chunks)} chunks into vector_store...")
+                await insert_chunks_to_vectorstore(vector_store_id, all_chunks, http_client)
+            else:
+                print("⚠️  No chunks to insert!")
 
         await conn.close()
 
@@ -256,7 +281,10 @@ async def main():
         print("✅ VECTOR STORE INITIALIZATION COMPLETED")
         print("=" * 80)
         print(f"   Vector Store ID: {vector_store_id}")
-        print(f"   Total chunks: {len(contract_chunks) + len(kb_chunks) + len(claim_chunks)}")
+        print(f"   User Contracts: {len(contract_chunks)}")
+        print(f"   Knowledge Base: {len(kb_chunks)}")
+        print(f"   Claim Documents: {len(claim_chunks)}")
+        print(f"   Total chunks: {len(all_chunks)}")
         print("=" * 80)
 
     except Exception as e:
