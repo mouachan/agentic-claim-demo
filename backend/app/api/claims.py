@@ -156,20 +156,12 @@ async def process_claim(
         start_time = time.time()
 
         try:
-            # Build tools list with MCP server format (required by Responses API)
-            tools = []
+            # Build tool_groups list (reference configured tool groups in LlamaStack)
+            tool_groups = []
             if not process_request.skip_ocr:
-                tools.append({
-                    "type": "mcp",
-                    "server_label": "ocr-server",
-                    "server_url": "http://ocr-server.claims-demo.svc.cluster.local:8080/sse"
-                })
+                tool_groups.append("mcp::ocr-server")
             if process_request.enable_rag:
-                tools.append({
-                    "type": "mcp",
-                    "server_label": "rag-server",
-                    "server_url": "http://rag-server.claims-demo.svc.cluster.local:8080/sse"
-                })
+                tool_groups.append("mcp::rag-server")
 
             # Call LlamaStack Agents API directly (avoid EventLogger OOM)
             # Prepare user message
@@ -193,44 +185,66 @@ Workflow configuration:
 - Enable RAG retrieval: {process_request.enable_rag}
 """
 
-            # Create session via API
+            # Use Responses API (simpler than Agents API)
             async with httpx.AsyncClient(timeout=120.0) as http_client:
-                # Create conversation
-                conv_response = await http_client.post(
-                    f"{settings.llamastack_endpoint}/v1/conversations",
-                    json={"name": f"claim_{claim_id}"}
-                )
-                conv_data = conv_response.json()
-                conversation_id = conv_data.get("conversation_id")
+                # Call Responses API directly
+                # Combine system instructions and user message
+                input_messages = [
+                    {"role": "system", "content": CLAIMS_PROCESSING_AGENT_INSTRUCTIONS},
+                    {"role": "user", "content": user_message}
+                ]
 
-                logger.info(f"Created conversation: {conversation_id}")
+                response_payload = {
+                    "model": settings.llamastack_default_model,
+                    "input": input_messages,
+                    "sampling_params": {
+                        "temperature": 0.7,
+                        "top_p": 0.9,
+                        "max_tokens": 2048
+                    },
+                    "stream": False
+                }
 
-                # Call agent with tools
+                # Add tool_groups if provided
+                if tool_groups:
+                    response_payload["tool_groups"] = tool_groups
+                    response_payload["tool_choice"] = "auto"
+
+                logger.info(f"Calling Responses API with {len(tool_groups)} tool groups")
+
                 agent_response = await http_client.post(
-                    f"{settings.llamastack_endpoint}/v1/responses",
-                    json={
-                        "model": settings.llamastack_default_model,
-                        "conversation_id": conversation_id,
-                        "messages": [
-                            {"role": "system", "content": CLAIMS_PROCESSING_AGENT_INSTRUCTIONS},
-                            {"role": "user", "content": user_message}
-                        ],
-                        "tools": tools,
-                        "stream": False
-                    }
+                    f"{settings.llamastack_endpoint}/v1/openai/v1/responses",
+                    json=response_payload
                 )
 
                 response_data = agent_response.json()
                 logger.info(f"Agent response status: {agent_response.status_code}")
 
-                # Extract final response
-                if "choices" in response_data:
-                    final_response = response_data["choices"][0]["message"]["content"]
-                elif "message" in response_data:
-                    final_response = response_data["message"]["content"]
-                elif "content" in response_data:
-                    final_response = response_data["content"]
+                # Extract final response from Responses API
+                final_response = None
+
+                if agent_response.status_code == 200:
+                    # Responses API format
+                    if "output_text" in response_data:
+                        final_response = response_data["output_text"]
+                    elif "output" in response_data:
+                        if isinstance(response_data["output"], str):
+                            final_response = response_data["output"]
+                        elif isinstance(response_data["output"], dict):
+                            final_response = response_data["output"].get("content", str(response_data["output"]))
+                    elif "choices" in response_data and len(response_data["choices"]) > 0:
+                        # OpenAI-compatible format
+                        choice = response_data["choices"][0]
+                        if "message" in choice:
+                            final_response = choice["message"].get("content", "")
+                        elif "text" in choice:
+                            final_response = choice["text"]
+                    elif "content" in response_data:
+                        final_response = response_data["content"]
                 else:
+                    logger.error(f"Responses API error: {response_data}")
+
+                if not final_response:
                     logger.error(f"Unexpected response format: {response_data}")
                     final_response = str(response_data)
 
