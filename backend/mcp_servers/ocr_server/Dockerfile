@@ -29,5 +29,5 @@ USER 1001
 
 EXPOSE 8080
 
-# Start MCP server with SSE protocol
-CMD ["python", "-m", "uvicorn", "mcp_server:app", "--host", "0.0.0.0", "--port", "8080"]
+# Start MCP server with FastMCP SDK
+CMD ["python", "mcp_server.py"]

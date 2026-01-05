@@ -1,9 +1,8 @@
 # MCP RAG Server Dependencies
-# Centralized via LlamaStack - no direct DB access!
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
-httpx==0.26.0
-pydantic==2.5.3
+httpx>=0.27.0
+pydantic>=2.7.2
 
-# MCP Protocol (Server-Sent Events)
-sse-starlette==1.8.2
+# MCP SDK (official from Anthropic)
+mcp>=1.0.0
