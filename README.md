@@ -24,9 +24,9 @@ An intelligent insurance claims processing system powered by AI agents, demonstr
 **📖 Deployment Instructions**: See the [LlamaStack v0.3.5 Deployment](#llamastack-v035-deployment) section below.
 
 **Key URLs** (deployed version):
-- Frontend: https://frontend-claims-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com
-- Backend API: https://backend-claims-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com/api/v1/claims/
-- **LlamaStack v0.3.5**: https://llamastack-test-v035-claims-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com
+- Frontend: https://frontend-claims-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>
+- Backend API: https://backend-claims-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>/api/v1/claims/
+- **LlamaStack v0.3.5**: https://llamastack-test-v035-claims-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>
 
 ### LlamaStack Version Roadmap
 
@@ -37,7 +37,7 @@ An intelligent insurance claims processing system powered by AI agents, demonstr
 
 The system now uses **Gemma-300m** (768-dim) for generating embeddings instead of Granite-125m:
 
-- **Endpoint**: `https://embeddinggemma-300m-edg-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com`
+- **Endpoint**: `https://embeddinggemma-300m-edg-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>`
 - **Vector Store**: LlamaStack with pgvector backend
 - **Configured in**: `openshift/configmaps/llama-stack-config.yaml`
 
