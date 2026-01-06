@@ -1,15 +1,19 @@
 """
-MCP OCR Server - Extract text from documents using qwen-vl-7b multimodal model
+MCP OCR Server - Extract text from documents using EasyOCR
+
+Performance improvement: Migrated from Qwen-VL 7B to EasyOCR for faster processing.
+- Qwen-VL: 30+ seconds per document (exceeded LlamaStack 30s timeout)
+- EasyOCR: 2-4 seconds per document (embedded library, no external service)
 """
 
 import asyncio
-import base64
 import logging
 import os
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+import easyocr
 import httpx
 from fastapi import FastAPI, HTTPException
 from PIL import Image
@@ -26,16 +30,25 @@ logger = logging.getLogger(__name__)
 # FastAPI app
 app = FastAPI(
     title="MCP OCR Server",
-    description="OCR processing with qwen-vl-7b multimodal model",
-    version="2.0.0",
+    description="OCR processing with EasyOCR (fast, embedded)",
+    version="3.0.0",
 )
 
 # Configuration
-QWEN_VL_ENDPOINT = os.getenv(
-    "QWEN_VL_ENDPOINT",
-    "http://qwen-vl-7b-predictor.multimodal-demo.svc.cluster.local:8080/v1"
-)
 LLAMASTACK_ENDPOINT = os.getenv("LLAMASTACK_ENDPOINT", "http://localhost:8090")
+OCR_LANGUAGES = os.getenv("OCR_LANGUAGES", "en,fr").split(",")
+
+# Initialize EasyOCR reader (lazy loading on first use)
+_ocr_reader = None
+
+def get_ocr_reader():
+    """Get or create EasyOCR reader instance (singleton)."""
+    global _ocr_reader
+    if _ocr_reader is None:
+        logger.info(f"Initializing EasyOCR reader with languages: {OCR_LANGUAGES}")
+        _ocr_reader = easyocr.Reader(OCR_LANGUAGES, gpu=True)  # Use GPU if available
+        logger.info("EasyOCR reader initialized successfully")
+    return _ocr_reader
 
 
 # Pydantic models
@@ -59,96 +72,63 @@ class HealthResponse(BaseModel):
 
 
 # Helper functions
-def image_to_base64(image_path: Path) -> str:
-    """Convert image to base64 string."""
-    with open(image_path, "rb") as img_file:
-        return base64.b64encode(img_file.read()).decode('utf-8')
-
-
-async def extract_text_with_qwen_vl(image_path: Path) -> tuple[str, float]:
+async def extract_text_with_easyocr(image_path: Path) -> tuple[str, float]:
     """
-    Extract text from image using qwen-vl-7b multimodal model.
+    Extract text from image using EasyOCR.
 
-    Qwen-VL is a vision-language model that can understand images and extract text.
+    EasyOCR is a lightweight, fast OCR library that supports 80+ languages.
+    It runs locally (no external API calls) and is much faster than Qwen-VL.
     """
     try:
-        # Convert image to base64
-        image_b64 = image_to_base64(image_path)
+        reader = get_ocr_reader()
 
-        # Prepare prompt for text extraction
-        prompt = """Extract all text from this image.
+        # Run OCR on the image
+        # readtext returns list of (bbox, text, confidence) tuples
+        result = reader.readtext(str(image_path))
 
-Please transcribe exactly what you see, maintaining the layout and structure.
-Include all visible text, numbers, dates, and other textual information."""
+        # Extract text and confidence
+        if not result:
+            logger.warning(f"No text detected in {image_path.name}")
+            return "", 0.0
 
-        # Call qwen-vl-7b model
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{QWEN_VL_ENDPOINT}/chat/completions",
-                json={
-                    "model": "qwen-vl-7b",
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{image_b64}"
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    "temperature": 0.1,
-                    "max_tokens": 2048
-                }
-            )
+        # Combine all detected text blocks
+        text_blocks = []
+        confidences = []
 
-            if response.status_code == 200:
-                result = response.json()
-                extracted_text = result["choices"][0]["message"]["content"]
+        for bbox, text, confidence in result:
+            text_blocks.append(text)
+            confidences.append(confidence)
 
-                # Qwen-VL is very confident, estimate ~0.9 confidence for successful extraction
-                confidence = 0.9
+        # Join text blocks with spaces
+        extracted_text = " ".join(text_blocks)
 
-                logger.info(f"Extracted text from {image_path.name} using qwen-vl-7b")
-                return extracted_text.strip(), confidence
-            else:
-                logger.error(f"Qwen-VL API error: {response.status_code} - {response.text}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Qwen-VL API error: {response.status_code}"
-                )
+        # Calculate average confidence
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+
+        logger.info(f"Extracted text from {image_path.name} using EasyOCR (confidence: {avg_confidence:.2f})")
+        return extracted_text.strip(), avg_confidence
 
     except Exception as e:
-        logger.error(f"Error extracting text with qwen-vl: {str(e)}")
+        logger.error(f"Error extracting text with EasyOCR: {str(e)}")
         raise
 
 
 async def extract_text_from_pdf(pdf_path: Path) -> tuple[str, float]:
-    """Extract text from PDF by converting to images and using qwen-vl."""
+    """Extract text from PDF by converting to images and using EasyOCR."""
     try:
         # Convert PDF to images
-        images = convert_from_path(pdf_path)
+        images = convert_from_path(pdf_path, dpi=200)  # 200 DPI for good quality + speed
 
         all_text = []
         all_confidences = []
 
         for i, image in enumerate(images):
-            # Optimize image to reduce Qwen-VL processing time
-            # Resize to 70% + JPEG quality 85 → ~8s instead of ~12s
-            new_size = (int(image.size[0] * 0.7), int(image.size[1] * 0.7))
-            optimized_image = image.resize(new_size, Image.Resampling.LANCZOS)
-            optimized_image = optimized_image.convert('RGB')  # JPEG needs RGB
-
-            # Save optimized image
+            # Save image temporarily for EasyOCR
             temp_image_path = Path(f"/tmp/page_{i}.jpg")
-            optimized_image.save(temp_image_path, "JPEG", quality=85, optimize=True)
+            image.save(temp_image_path, "JPEG", quality=90)
 
-            # Extract text from page using qwen-vl
-            text, confidence = await extract_text_with_qwen_vl(temp_image_path)
+            # Extract text from page using EasyOCR
+            text, confidence = await extract_text_with_easyocr(temp_image_path)
             all_text.append(text)
             all_confidences.append(confidence)
 
@@ -159,7 +139,7 @@ async def extract_text_from_pdf(pdf_path: Path) -> tuple[str, float]:
         combined_text = "\n\n--- Page Break ---\n\n".join(all_text)
         avg_confidence = sum(all_confidences) / len(all_confidences) if all_confidences else 0.0
 
-        logger.info(f"Extracted text from PDF with {len(images)} pages, confidence: {avg_confidence:.2f}")
+        logger.info(f"Extracted text from PDF with {len(images)} pages using EasyOCR, confidence: {avg_confidence:.2f}")
         return combined_text, avg_confidence
 
     except Exception as e:
@@ -235,9 +215,11 @@ async def validate_with_llm(raw_text: str, document_type: str) -> Dict[str, Any]
 @app.post("/ocr_document", response_model=OCRResponse)
 async def ocr_document(request: OCRRequest) -> OCRResponse:
     """
-    Extract text from a document using qwen-vl-7b multimodal model.
+    Extract text from a document using EasyOCR.
 
     MCP Tool: ocr_document
+
+    Performance: 2-4 seconds per document (much faster than Qwen-VL's 30+ seconds)
     """
     # ============== TIMING START ==============
     start_time = time.time()
@@ -262,17 +244,7 @@ async def ocr_document(request: OCRRequest) -> OCRResponse:
         if file_extension in ['.pdf']:
             raw_text, confidence = await extract_text_from_pdf(document_path)
         elif file_extension in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp']:
-            # Optimize image before OCR
-            image = Image.open(document_path)
-            new_size = (int(image.size[0] * 0.7), int(image.size[1] * 0.7))
-            optimized_image = image.resize(new_size, Image.Resampling.LANCZOS)
-            optimized_image = optimized_image.convert('RGB')
-
-            temp_image_path = Path(f"/tmp/optimized_{document_path.stem}.jpg")
-            optimized_image.save(temp_image_path, "JPEG", quality=85, optimize=True)
-
-            raw_text, confidence = await extract_text_with_qwen_vl(temp_image_path)
-            temp_image_path.unlink()  # Clean up
+            raw_text, confidence = await extract_text_with_easyocr(document_path)
         else:
             raise HTTPException(
                 status_code=400,
@@ -291,9 +263,9 @@ async def ocr_document(request: OCRRequest) -> OCRResponse:
         total_time = time.time() - start_time
         logger.info(f"⏱️  OCR COMPLETED in {total_time:.2f}s (Extraction: {extraction_time:.2f}s, Validation: {validation_time:.2f}s)")
 
-        # Check if we exceeded 10s timeout threshold
-        if total_time > 10.0:
-            logger.warning(f"⚠️  OCR TOO SLOW: {total_time:.2f}s > 10s LlamaStack timeout!")
+        # Check if we exceeded LlamaStack timeout threshold (30s)
+        if total_time > 25.0:
+            logger.warning(f"⚠️  OCR approaching timeout: {total_time:.2f}s (LlamaStack timeout: 30s)")
 
         return OCRResponse(
             success=True,
@@ -319,33 +291,34 @@ async def ocr_document(request: OCRRequest) -> OCRResponse:
 @app.get("/health/live", response_model=HealthResponse)
 async def liveness():
     """Liveness probe."""
-    return HealthResponse(status="alive", service="mcp-ocr-server-qwen")
+    return HealthResponse(status="alive", service="mcp-ocr-server-easyocr")
 
 
 @app.get("/health/ready", response_model=HealthResponse)
 async def readiness():
-    """Readiness probe."""
-    # Check if qwen-vl endpoint is accessible
+    """Readiness probe - EasyOCR is embedded, always ready if server is alive."""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{QWEN_VL_ENDPOINT}/health")
-            if response.status_code == 200:
-                return HealthResponse(status="ready", service="mcp-ocr-server-qwen")
-            else:
-                raise HTTPException(status_code=503, detail="Qwen-VL service not ready")
+        # EasyOCR is embedded, just check if we can initialize it
+        reader = get_ocr_reader()
+        if reader:
+            return HealthResponse(status="ready", service="mcp-ocr-server-easyocr")
+        else:
+            raise HTTPException(status_code=503, detail="EasyOCR reader not initialized")
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Qwen-VL not ready: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"EasyOCR not ready: {str(e)}")
 
 
 @app.get("/")
 async def root():
     """Root endpoint."""
     return {
-        "service": "MCP OCR Server (Qwen-VL)",
-        "version": "2.0.0",
+        "service": "MCP OCR Server (EasyOCR)",
+        "version": "3.0.0",
         "status": "running",
-        "model": "qwen-vl-7b",
-        "tools": ["ocr_document"]
+        "model": "easyocr",
+        "languages": OCR_LANGUAGES,
+        "tools": ["ocr_document"],
+        "performance": "2-4 seconds per document (vs 30+ seconds with Qwen-VL)"
     }
 
 

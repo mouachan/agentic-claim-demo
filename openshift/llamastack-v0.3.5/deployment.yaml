@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llamastack-test-v035
+  namespace: claims-demo
+  labels:
+    app: llamastack-v035
+    version: v0.3.5+rhai0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llamastack-v035
+  template:
+    metadata:
+      labels:
+        app: llamastack-v035
+        version: v0.3.5+rhai0
+    spec:
+      containers:
+      - name: llama-stack
+        image: docker.io/llamastack/distribution-rh-dev:0.3.5+rhai0
+        ports:
+        - containerPort: 8321
+          name: http
+          protocol: TCP
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: config
+          mountPath: /app/run.yaml
+          subPath: run.yaml
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8321
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8321
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+      volumes:
+      - name: config
+        configMap:
+          name: llama-stack-config-v035

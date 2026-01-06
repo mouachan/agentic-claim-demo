@@ -39,8 +39,8 @@ export default function ClaimDetailPage() {
       setClaim(claimData)
       setStatus(statusData)
 
-      // Load decision if completed
-      if (claimData.status === 'completed') {
+      // Load decision if processed (completed, manual_review, or failed)
+      if (['completed', 'manual_review', 'failed'].includes(claimData.status)) {
         try {
           const decisionData = await claimsApi.getClaimDecision(claimId)
           setDecision(decisionData)
@@ -80,8 +80,8 @@ export default function ClaimDetailPage() {
         if (claimData.status !== 'processing') {
           stopPolling()
 
-          // Load decision if completed
-          if (claimData.status === 'completed') {
+          // Load decision if processed (completed, manual_review, or failed)
+          if (['completed', 'manual_review', 'failed'].includes(claimData.status)) {
             const decisionData = await claimsApi.getClaimDecision(claimId)
             setDecision(decisionData)
           }
@@ -108,7 +108,12 @@ export default function ClaimDetailPage() {
       setProcessing(true)
       setError(null)
 
-      await claimsApi.processClaim(claimId, { workflow_type: workflowType })
+      // Enable both OCR (now using fast EasyOCR) and RAG for full workflow
+      await claimsApi.processClaim(claimId, {
+        workflow_type: workflowType,
+        skip_ocr: false,  // EasyOCR is fast (2-4s), no timeout issues
+        enable_rag: true
+      })
 
       // Reload claim and start polling
       await loadClaimData()

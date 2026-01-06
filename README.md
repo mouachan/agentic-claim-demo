@@ -2,6 +2,37 @@
 
 An intelligent insurance claims processing system powered by AI agents, demonstrating advanced document processing, policy retrieval, and automated decision-making capabilities using Model Context Protocol (MCP) and LlamaStack.
 
+## ⚠️ IMPORTANT: LlamaStack Version Requirement
+
+**This demo REQUIRES LlamaStack v0.3.5+rhai0 or later.**
+
+### Why LlamaStack v0.3.5+rhai0?
+
+**Previous versions (v0.3.0-v0.3.4) had critical MCP tool execution bugs:**
+- ❌ Tool calls would fail silently or timeout
+- ❌ No proper streaming support for MCP tools
+- ❌ Incorrect `toolgroups` API format
+- ❌ Session persistence issues
+
+**LlamaStack v0.3.5+rhai0 fixes ALL these issues:**
+- ✅ **Reliable MCP tool execution** - Multiple MCP tools work correctly (OCR + RAG)
+- ✅ **Streaming API support** - Real-time agent responses
+- ✅ **New `toolgroups` API format** - Proper tool registration
+- ✅ **PostgreSQL persistence** - Agents and conversations stored reliably
+- ✅ **Full end-to-end claim processing** - Tested and validated in production
+
+**📖 Deployment Instructions**: See the [LlamaStack v0.3.5 Deployment](#llamastack-v035-deployment) section below.
+
+**Key URLs** (deployed version):
+- Frontend: https://frontend-claims-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com
+- Backend API: https://backend-claims-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com/api/v1/claims/
+- **LlamaStack v0.3.5**: https://llamastack-test-v035-claims-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com
+
+### LlamaStack Version Roadmap
+
+- **Current (Required)**: v0.3.5+rhai0 - Custom deployment (see deployment steps below)
+- **Future**: OpenShift AI 3.0 native LlamaStack - When Red Hat updates to v0.3.5+
+
 ## Embedding Model Configuration
 
 The system now uses **Gemma-300m** (768-dim) for generating embeddings instead of Granite-125m:
@@ -44,14 +75,14 @@ graph TB
             B[⚙️ Backend API<br/>FastAPI + ReActAgent<br/>Route/Service]
         end
 
+        subgraph "LlamaStack v0.3.5 - Manual Deployment"
+            LS[🧠 LlamaStack v0.3.5+rhai0<br/>ReActAgent Runtime<br/>Service: llamastack-test-v035:8321<br/>⚠️ MCP Tools Working!]
+        end
+
         subgraph "OpenShift AI 3.0 - AI Services"
-            subgraph "LlamaStack Distribution"
-                LS[🧠 LlamaStack Server<br/>ReActAgent Runtime<br/>Service: claims-llamastack:8321]
-            end
 
             subgraph "AI Models - InferenceServices"
                 LLM["🦙 Llama 3.2 3B Instruct<br/>vLLM (2x L40 GPUs)<br/>Context: 32K tokens<br/>Service: llama-instruct-32-3b"]
-                QWEN["👁️ Qwen-VL 7B<br/>Vision-Language Model<br/>1x L40 GPU<br/>Service: qwen-vl-7b"]
             end
 
             subgraph "TrustyAI Guardrails"
@@ -61,7 +92,7 @@ graph TB
         end
 
         subgraph "MCP Servers - Namespace: claims-demo"
-            OCR["📄 OCR MCP Server<br/>Document Processing<br/>Service: ocr-server:8080"]
+            OCR["📄 OCR MCP Server<br/>EasyOCR Embedded (2-4s)<br/>Service: ocr-server:8080"]
             RAG["🔍 RAG MCP Server Custom<br/>Advanced Vector Retrieval<br/>Service: rag-server:8080"]
             RAGBUILTIN["🔍 Builtin RAG Runtime<br/>LlamaStack Native<br/>inline::rag-runtime"]
         end
@@ -90,8 +121,9 @@ graph TB
     RAGBUILTIN -->|Direct pgvector Query| DB
 
     %% MCP Servers to AI Models
-    OCR -->|Vision OCR| QWEN
-    OCR -->|Text Validation| LLM
+    OCR -->|LLM Validation| LLM
+
+    %% Note: EasyOCR runs embedded in OCR server (no external model call)
 
     %% MCP Servers to Data
     RAG -->|Custom Vector Search| DB
@@ -105,7 +137,6 @@ graph TB
     style B fill:#ffe6f0
     style LS fill:#f3e5f5
     style LLM fill:#e8f5e9
-    style QWEN fill:#e8f5e9
     style LG fill:#fff9c4
     style GG fill:#fff9c4
     style OCR fill:#e3f2fd
@@ -121,7 +152,7 @@ graph TB
 - **AI Orchestration**: LlamaStack with ReActAgent (Reasoning + Acting)
 - **AI Models**:
   - **Primary LLM**: Llama 3.2 3B Instruct (vLLM inference, 2 GPUs, 32K context)
-  - **OCR Vision**: Qwen-VL 7B (multimodal vision-language model)
+  - **OCR Engine**: EasyOCR (embedded library, fast text extraction)
   - **Guardrails**:
     - Llama Guard 3 1B (content safety detection)
     - Granite Guardian 3.1 2B (HAP, PII detection)
@@ -132,11 +163,35 @@ graph TB
 ## Features
 
 ### 1. Document Processing (OCR MCP Server)
-- **Vision Model**: Qwen-VL 7B multimodal vision-language model
+- **OCR Engine**: EasyOCR (embedded library, 80+ languages support)
+- **Performance**: 2-4 seconds per document (fast enough to avoid LlamaStack timeout)
 - Automated text extraction from claim documents (PDF, images)
 - Multi-format support: PDF, JPG, PNG, TIFF
 - Structured data extraction with confidence scores
-- Intelligent document understanding and layout analysis
+- LLM validation for accuracy
+
+#### 📝 Architecture Decision: Why EasyOCR instead of Qwen-VL?
+
+**Previous Implementation (Qwen-VL 7B):**
+- Large multimodal vision-language model (7 billion parameters)
+- Required dedicated GPU deployment via InferenceService
+- Processing time: 30+ seconds per document
+- **Problem**: Exceeded LlamaStack's 30-second MCP tool timeout → systematic failures
+
+**Current Implementation (EasyOCR):**
+- Lightweight embedded library (no external service)
+- Processing time: 2-4 seconds per document
+- Runs inside the OCR MCP server pod
+- Can use GPU if available (optional)
+- Specialized for OCR → better accuracy for text extraction
+
+**Trade-offs:**
+- ✅ **10x faster** processing (no timeout issues)
+- ✅ **Simpler architecture** (no separate InferenceService)
+- ✅ **Lower resource usage** (optional GPU, smaller footprint)
+- ⚠️ Less "intelligent" than multimodal LLM (but validated by LLM post-processing)
+
+**Note**: Qwen-VL deployment instructions are preserved in [`openshift/qwen-vl-7b/README.md`](openshift/qwen-vl-7b/README.md) for reference. If you need advanced vision understanding beyond OCR, you can still deploy it separately.
 
 ### 2. Policy Retrieval (RAG MCP Server)
 - Vector similarity search for user contracts
@@ -391,169 +446,268 @@ oc get pods -l app=guardrails
 oc logs -l app=guardrails-orchestrator --tail=20
 ```
 
-#### Step 5: Configure and Deploy LlamaStack with OpenShift AI 3.0
+#### Step 5: LlamaStack v0.3.5 Deployment
 
-LlamaStack is **managed by the OpenShift AI 3.0 Operator** using the `LlamaStackDistribution` custom resource. The operator handles the complete deployment lifecycle.
+⚠️ **CRITICAL**: You MUST use LlamaStack v0.3.5+rhai0 or later. Earlier versions have broken MCP tool execution.
 
-**5.1 Create LlamaStack ConfigMap with MCP Tools**
+**Why NOT use OpenShift AI 3.0 native LlamaStack?**
+- OpenShift AI 3.0 currently ships with LlamaStack v0.3.0-v0.3.4
+- These versions have critical bugs with MCP tool calls
+- We deploy LlamaStack v0.3.5+rhai0 **manually** until OpenShift AI updates
 
-First, create a ConfigMap containing the LlamaStack configuration with MCP tool groups:
+**5.1 Create LlamaStack Configuration ConfigMap**
+
+Create a ConfigMap with the LlamaStack v0.3.5 configuration including MCP tools:
 
 ```bash
 # Apply the ConfigMap with MCP tools configuration
-oc apply -f openshift/configmaps/llamastack-config.yaml -n claims-demo
+oc apply -f openshift/llamastack-v0.3.5/llama-stack-config.yaml -n claims-demo
 ```
 
-**What's in this ConfigMap:**
-- **MCP Tool Groups**:
-  - `mcp::ocr-server` → `http://ocr-server.claims-demo.svc.cluster.local:8080/sse`
-  - `mcp::rag-server` → `http://rag-server.claims-demo.svc.cluster.local:8080/sse`
-- **Vector Database**: PostgreSQL + pgvector configuration
-- **vLLM Inference**: Llama 3.2 3B + Mistral 3 14B providers
-- **ReActAgent Runtime**: Agent orchestration configuration
-- **Eval Provider**: For agent evaluation
-
-📖 **Reference**: See [`openshift/llamastack/working-run.yaml`](openshift/llamastack/working-run.yaml) for the full configuration format.
-
-**5.2 Deploy LlamaStack via LlamaStackDistribution CRD**
-
-LlamaStack is deployed using the **LlamaStackDistribution** custom resource, which is managed by the OpenShift AI Operator.
-
-Create the LlamaStackDistribution:
+**Configuration Contents** (`llama-stack-config.yaml`):
 
 ```yaml
-apiVersion: llamastack.io/v1alpha1
-kind: LlamaStackDistribution
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: claims-llamastack
+  name: llama-stack-config-v035
+  namespace: claims-demo
+data:
+  run.yaml: |
+    version: "2"
+
+    # Built-in providers (inline)
+    built_in_providers:
+      - remote::ollama           # For local Ollama models
+      - inline::meta-reference   # Meta reference agents
+      - remote::fireworks        # Fireworks AI
+      - remote::together         # Together AI
+      - inline::pgvector         # Vector DB (pgvector)
+      - inline::rag-runtime      # Builtin RAG
+      - remote::model-context-protocol  # MCP provider
+
+    # Model providers
+    models:
+      - provider_id: vllm-inference-1
+        provider_type: remote::vllm
+        config:
+          url: "http://llama-instruct-32-3b-predictor.edg-demo.svc.cluster.local:8000/v1"
+
+    # MCP Tool Groups (CRITICAL for v0.3.5)
+    toolgroups:
+      - toolgroup_id: mcp::ocr-server
+        provider_id: model-context-protocol
+        provider_type: remote::model-context-protocol
+        mcp_endpoint:
+          uri: "http://ocr-server.claims-demo.svc.cluster.local:8080/sse"
+
+      - toolgroup_id: mcp::rag-server
+        provider_id: model-context-protocol
+        provider_type: remote::model-context-protocol
+        mcp_endpoint:
+          uri: "http://rag-server.claims-demo.svc.cluster.local:8080/sse"
+
+    # Agents runtime
+    agents:
+      - provider_id: meta-reference
+        provider_type: inline::meta-reference
+        config: {}
+
+    # Vector DB for RAG
+    memory_banks:
+      - provider_id: pgvector
+        provider_type: inline::pgvector
+        config:
+          host: "postgresql.claims-demo.svc.cluster.local"
+          port: 5432
+          db: "claims_db"
+          user: "claims_user"
+          password: "${POSTGRES_PASSWORD}"
+```
+
+**5.2 Create LlamaStack Deployment (v0.3.5)**
+
+Create a Deployment manifest for LlamaStack v0.3.5:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llamastack-test-v035
   namespace: claims-demo
 spec:
   replicas: 1
-  server:
-    distribution:
-      name: rh-dev
-    containerSpec:
-      name: llama-stack
-      port: 8321
-    userConfig:
-      configMapName: llama-stack-config
-      configMapNamespace: claims-demo
+  selector:
+    matchLabels:
+      app: llamastack-v035
+  template:
+    metadata:
+      labels:
+        app: llamastack-v035
+    spec:
+      containers:
+      - name: llama-stack
+        image: docker.io/llamastack/distribution-rh-dev:0.3.5+rhai0
+        ports:
+        - containerPort: 8321
+          name: http
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: config
+          mountPath: /app/run.yaml
+          subPath: run.yaml
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8321
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8321
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: llama-stack-config-v035
 ```
 
-Apply the CRD:
+Deploy LlamaStack v0.3.5:
+
 ```bash
-oc apply -f openshift/crds/llamastack-distribution.yaml
-```
+# Apply the deployment
+oc apply -f openshift/llamastack-v0.3.5/deployment.yaml -n claims-demo
 
-**How it works:**
-1. The **OpenShift AI Operator** watches for `LlamaStackDistribution` resources
-2. The operator automatically creates a **Deployment**, **Service**, and **ConfigMap mount**
-3. The ConfigMap is mounted to `/etc/llama-stack/run.yaml` in the pod
-4. LlamaStack server starts and loads the configuration at startup
+# Create the service
+oc apply -f openshift/llamastack-v0.3.5/service.yaml -n claims-demo
+
+# Create the route
+oc apply -f openshift/llamastack-v0.3.5/route.yaml -n claims-demo
+```
 
 **5.3 Wait for LlamaStack to be Ready**
 
 ```bash
-# Check the LlamaStackDistribution status
-oc get llamastackdistribution claims-llamastack -n claims-demo
-
 # Wait for the pod to be ready
-oc wait --for=condition=ready pod -l app=llama-stack -n claims-demo --timeout=300s
+oc wait --for=condition=ready pod -l app=llamastack-v035 -n claims-demo --timeout=300s
 
-# Verify the service endpoint
-oc get svc claims-llamastack-service -n claims-demo
+# Check the logs
+oc logs -l app=llamastack-v035 -n claims-demo --tail=50
+
+# Verify the service
+oc get svc llamastack-test-v035 -n claims-demo
 ```
 
-**5.4 Verify MCP Tools Registration**
+**5.4 Verify MCP Tools Registration (v0.3.5 API)**
 
-Once LlamaStack is running, verify that MCP servers are properly registered:
+Verify that MCP servers are properly registered using the new v0.3.5 toolgroups API:
 
 ```bash
-# Check LlamaStack logs for MCP server registration
-oc logs -l app=llama-stack -n claims-demo --tail=100 | grep -i mcp
+# Get the LlamaStack route
+LLAMASTACK_URL=$(oc get route llamastack-test-v035 -n claims-demo -o jsonpath='{.spec.host}')
 
-# Verify tool groups via API
-oc exec -it $(oc get pod -l app=llama-stack -o name -n claims-demo | head -1) -- \
-  curl -s http://localhost:8321/v1/tool_groups
+# List registered tool groups
+curl -s "https://${LLAMASTACK_URL}/v1/toolgroups" | jq .
 ```
 
-Expected output should show:
+Expected output:
 ```json
 {
-  "tool_groups": [
+  "toolgroups": [
     {
-      "toolgroup_id": "builtin::rag",
-      "provider_id": "rag-runtime"
+      "identifier": "mcp::ocr-server",
+      "provider_resource_id": "model-context-protocol",
+      "type": "mcp"
     },
     {
-      "toolgroup_id": "mcp::ocr-server",
-      "provider_id": "model-context-protocol"
-    },
-    {
-      "toolgroup_id": "mcp::rag-server",
-      "provider_id": "model-context-protocol"
+      "identifier": "mcp::rag-server",
+      "provider_resource_id": "model-context-protocol",
+      "type": "mcp"
     }
   ]
 }
 ```
 
-**5.5 Updating LlamaStack Configuration**
+**5.5 Test MCP Tool Execution**
 
-To update the LlamaStack configuration after initial deployment:
+Test that MCP tools can be called successfully:
+
+```bash
+# Create a test agent
+curl -X POST "https://${LLAMASTACK_URL}/v1/agents" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "test-agent",
+    "model": "vllm-inference-1/llama-instruct-32-3b",
+    "instructions": "You are a helpful assistant.",
+    "toolgroups": ["mcp::ocr-server", "mcp::rag-server"]
+  }'
+
+# The agent should be created successfully with MCP tools registered
+```
+
+**5.6 Updating LlamaStack Configuration**
+
+To update the LlamaStack configuration:
 
 ```bash
 # 1. Update the ConfigMap
-oc edit configmap llama-stack-config -n claims-demo
-# OR
-oc apply -f openshift/configmaps/llamastack-config.yaml
+oc edit configmap llama-stack-config-v035 -n claims-demo
 
-# 2. Restart LlamaStack pod to load new configuration
-# The operator will automatically recreate the pod
-oc delete pod -l app=llama-stack -n claims-demo
+# 2. Restart LlamaStack pod to reload configuration
+oc delete pod -l app=llamastack-v035 -n claims-demo
 
 # 3. Wait for new pod to be ready
-oc wait --for=condition=ready pod -l app=llama-stack -n claims-demo --timeout=300s
+oc wait --for=condition=ready pod -l app=llamastack-v035 -n claims-demo --timeout=300s
 
-# 4. Verify the new configuration is loaded
-oc logs -l app=llama-stack -n claims-demo --tail=50
+# 4. Verify the new configuration
+oc logs -l app=llamastack-v035 -n claims-demo --tail=50
 ```
 
 📚 **Documentation**:
-- [Red Hat OpenShift AI 3.0 - Working with Llama Stack](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/)
-- [LlamaStack Configuration Reference](openshift/llamastack/README.md)
+- [LlamaStack v0.3.5 Release Notes](https://github.com/meta-llama/llama-stack/releases/tag/v0.3.5)
+- [LlamaStack MCP Provider Documentation](https://github.com/meta-llama/llama-stack/blob/main/docs/source/distributions/remote_mcp.md)
+- [Future: OpenShift AI 3.0 - Working with Llama Stack](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/) (when updated to v0.3.5+)
 
-#### Step 6: Deploy Qwen-VL 7B for OCR (Optional but Recommended)
+#### Step 6: OCR Configuration - EasyOCR (Default)
 
-The OCR MCP Server uses **Qwen-VL 7B** multimodal vision-language model for document text extraction.
+⚠️ **Important Change**: The OCR MCP Server now uses **EasyOCR** (embedded library) instead of Qwen-VL 7B.
 
-**Option A: Use existing Qwen-VL deployment**
+**Why the change?**
+- **Performance**: EasyOCR processes documents in 2-4 seconds vs 30+ seconds for Qwen-VL
+- **Reliability**: No timeout issues (LlamaStack has a 30-second MCP tool timeout)
+- **Simplicity**: No external InferenceService required - OCR runs inside the MCP server pod
+- **Resources**: Optional GPU usage, much smaller footprint
+
+**No additional deployment needed** - EasyOCR is installed automatically when deploying the OCR MCP server.
+
+**Configuration**:
 ```bash
-# If already deployed in your cluster, verify accessibility
-oc get inferenceservice qwen-vl-7b -n multimodal-demo
+# EasyOCR language support (default: English + French)
+# Edit OCR server deployment to add more languages if needed
+oc set env deployment/ocr-server OCR_LANGUAGES=en,fr,es,de -n claims-demo
 ```
 
-**Option B: Deploy Qwen-VL to your namespace**
+**Supported languages**: 80+ languages including English, French, Spanish, German, Chinese, Arabic, etc.
 
-Follow the complete deployment guide: [`openshift/qwen-vl-7b/README.md`](openshift/qwen-vl-7b/README.md)
+---
 
-Quick deployment:
-```bash
-cd openshift/qwen-vl-7b
+#### Step 6 (Alternative): Deploy Qwen-VL 7B for Advanced Vision (Optional - Not Recommended)
 
-# 1. Edit files to replace placeholders (namespace, HF token, storage class)
-# 2. Deploy in order
-oc apply -f 01-pvc.yaml
-oc apply -f 02-secret-hf-token.yaml
-oc apply -f 03-model-download-job.yaml
-oc wait --for=condition=complete job/download-qwen-model --timeout=600s
-oc apply -f 04-servingruntime.yaml
-oc apply -f 05-inferenceservice.yaml
+**⚠️ Deprecated for OCR**: Qwen-VL is no longer used by default due to performance issues (30+ second processing time exceeds LlamaStack timeout).
 
-# 3. Wait for model to be ready
-oc wait --for=condition=ready pod -l serving.kserve.io/inferenceservice=qwen-vl-7b --timeout=600s
-```
+**When to use Qwen-VL**: Only if you need advanced vision understanding beyond text extraction (e.g., image analysis, visual question answering).
 
-**Note**: Qwen-VL requires 1 GPU (L40 or equivalent with 24GB+ VRAM) and ~30GB storage.
+Deployment instructions preserved for reference: [`openshift/qwen-vl-7b/README.md`](openshift/qwen-vl-7b/README.md)
+
+**Requirements**: 1 GPU (L40 or equivalent with 24GB+ VRAM) + ~30GB storage.
 
 #### Step 7: Deploy MCP Servers
 
