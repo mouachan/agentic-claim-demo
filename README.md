@@ -4,24 +4,7 @@ An intelligent insurance claims processing system powered by AI agents, demonstr
 
 ## ⚠️ IMPORTANT: LlamaStack Version Requirement
 
-**This demo REQUIRES LlamaStack v0.3.5+rhai0 or later.**
-
-### Why LlamaStack v0.3.5+rhai0?
-
-**Previous versions (v0.3.0-v0.3.4) had critical MCP tool execution bugs:**
-- ❌ Tool calls would fail silently or timeout
-- ❌ No proper streaming support for MCP tools
-- ❌ Incorrect `toolgroups` API format
-- ❌ Session persistence issues
-
-**LlamaStack v0.3.5+rhai0 fixes ALL these issues:**
-- ✅ **Reliable MCP tool execution** - Multiple MCP tools work correctly (OCR + RAG)
-- ✅ **Streaming API support** - Real-time agent responses
-- ✅ **New `toolgroups` API format** - Proper tool registration
-- ✅ **PostgreSQL persistence** - Agents and conversations stored reliably
-- ✅ **Full end-to-end claim processing** - Tested and validated in production
-
-**📖 Deployment Instructions**: See the [LlamaStack v0.3.5 Deployment](#llamastack-v035-deployment) section below.
+**This demo uses LlamaStack v0.3.5+rhai0 as a temporary solution until the next OpenShift AI release.**
 
 **Key URLs** (deployed version):
 - Frontend: https://frontend-claims-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>
