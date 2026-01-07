@@ -309,30 +309,15 @@ podman push quay.io/your-org/rag-server:latest
 **1.2 Build Backend API**
 ```bash
 cd ../../..
-podman build -t quay.io/your-org/claims-backend:latest -f backend/Dockerfile .
-podman push quay.io/your-org/claims-backend:latest
+podman build -t quay.io/your-org/backend:latest -f backend/Dockerfile .
+podman push quay.io/your-org/backend:latest
 ```
 
 **1.3 Build Frontend**
 ```bash
 cd frontend
-podman build -t quay.io/your-org/claims-frontend:latest .
-podman push quay.io/your-org/claims-frontend:latest
-```
-
-**Alternative: Use OpenShift BuildConfigs**
-```bash
-# Create ImageStreams
-oc apply -f openshift/imagestreams/
-
-# Create BuildConfigs (builds from source)
-oc apply -f openshift/buildconfigs/
-
-# Trigger builds
-oc start-build ocr-server
-oc start-build rag-server
-oc start-build backend
-oc start-build frontend
+podman build -t quay.io/your-org/frontend:latest .
+podman push quay.io/your-org/frontend:latest
 ```
 
 #### Step 2: Deploy Database
@@ -785,6 +770,63 @@ oc logs -f -l app=backend
 
 # Watch LlamaStack logs for ReActAgent activity
 oc logs -f -l app=llama-stack | grep -i "thought\|action\|observation"
+```
+
+#### Step 11: Create Demo Claims
+
+**11.1 Reset Database and Create Test Claims**
+
+The `reset_and_create_claims.sh` script provides an easy way to clean the database and create fresh demo claims:
+
+```bash
+# Run the reset script to:
+# - Delete all existing claims, decisions, and logs
+# - Create 10 fresh pending claims with different outcomes
+cd scripts
+./reset_and_create_claims.sh
+```
+
+**What the script creates**:
+- **10 pending claims** ready for processing
+- **Claims 1, 4, 7, 9**: user_001 (has contracts) → Should **APPROVE**
+- **Claims 2, 5, 8**: user_002 (has contracts) → Should **APPROVE**
+- **Claims 3, 6, 10**: user_003 (no contracts) → Should **MANUAL_REVIEW**
+
+**11.2 Process a Specific Claim**
+
+After running the reset script, you can process any claim using its ID displayed by the script:
+
+```bash
+# Get claim ID from script output (e.g., CLM-2026-AUTO-001)
+CLAIM_ID="<claim-id-from-script>"
+
+# Process the claim via API
+BACKEND_URL=$(oc get route backend -o jsonpath='{.spec.host}')
+curl -X POST "https://${BACKEND_URL}/api/v1/claims/${CLAIM_ID}/process" \
+  -H "Content-Type: application/json" \
+  -d '{"workflow_type": "standard", "skip_ocr": false, "enable_rag": true}'
+
+# Monitor the claim status
+curl "https://${BACKEND_URL}/api/v1/claims/${CLAIM_ID}/status" | jq
+```
+
+**11.3 Process All Demo Claims**
+
+To process all 10 demo claims sequentially:
+
+```bash
+# Get all pending claim IDs
+CLAIM_IDS=$(oc exec postgresql-0 -n claims-demo -- psql -U claims_user -d claims_db -t -c \
+  "SELECT id FROM claims WHERE status='pending' ORDER BY claim_number;")
+
+# Process each claim
+for CLAIM_ID in $CLAIM_IDS; do
+  echo "Processing claim: $CLAIM_ID"
+  curl -X POST "https://${BACKEND_URL}/api/v1/claims/${CLAIM_ID}/process" \
+    -H "Content-Type: application/json" \
+    -d '{"skip_ocr": false, "enable_rag": true}'
+  sleep 5  # Wait between claims
+done
 ```
 
 ### Configuration
