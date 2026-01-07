@@ -1,64 +1,205 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: llama-stack-config-v035
+  name: llamastack-test-v035-config
   namespace: claims-demo
 data:
   run.yaml: |
     version: "2"
+    image_name: rh
 
-    # Built-in providers (inline)
-    built_in_providers:
-      - remote::ollama           # For local Ollama models
-      - inline::meta-reference   # Meta reference agents
-      - remote::fireworks        # Fireworks AI
-      - remote::together         # Together AI
-      - inline::pgvector         # Vector DB (pgvector)
-      - inline::rag-runtime      # Builtin RAG
-      - remote::model-context-protocol  # MCP provider
+    apis:
+    - agents
+    - batches
+    - datasetio
+    - files
+    - inference
+    - safety
+    - eval
+    - scoring
+    - tool_runtime
+    - vector_io
 
-    # Model providers
-    models:
-      - provider_id: vllm-inference-1
-        provider_type: remote::vllm
-        config:
-          url: "https://llama-instruct-32-3b-llama-instruct-32-3b-demo.apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com/v1"
+    providers:
+      inference:
+        - provider_id: sentence-transformers
+          provider_type: inline::sentence-transformers
+          config: {}
 
-    # MCP Tool Groups (CRITICAL for v0.3.5 - enables MCP tool execution)
-    toolgroups:
-      - toolgroup_id: mcp::ocr-server
-        provider_id: model-context-protocol
-        provider_type: remote::model-context-protocol
-        mcp_endpoint:
-          uri: "http://ocr-server.claims-demo.svc.cluster.local:8080/sse"
+        - provider_id: vllm-inference-1
+          provider_type: remote::vllm
+          config:
+            api_token: ${env.VLLM_API_TOKEN_1:=fake}
+            max_tokens: ${env.VLLM_MAX_TOKENS:=16384}
+            tls_verify: ${env.VLLM_TLS_VERIFY:=false}
+            url: https://llama-3-3-70b-llama-3-3-70b.apps.CLUSTER_DOMAIN/v1
 
-      - toolgroup_id: mcp::rag-server
-        provider_id: model-context-protocol
-        provider_type: remote::model-context-protocol
-        mcp_endpoint:
-          uri: "http://rag-server.claims-demo.svc.cluster.local:8080/sse"
+        - provider_id: gemma-embedding
+          provider_type: remote::vllm
+          config:
+            api_token: ${env.GEMMA_API_TOKEN:=fake}
+            max_tokens: ${env.GEMMA_MAX_TOKENS:=512}
+            tls_verify: ${env.GEMMA_TLS_VERIFY:=false}
+            url: https://embeddinggemma-300m-edg-demo.apps.CLUSTER_DOMAIN/v1
 
-    # Agents runtime with PostgreSQL persistence
-    agents:
-      - provider_id: meta-reference
-        provider_type: inline::meta-reference
-        config:
-          persistence_store:
-            type: postgres
-            namespace: null
-            host: "postgresql.claims-demo.svc.cluster.local"
-            port: 5432
-            db: "claims_db"
-            user: "claims_user"
-            password: "${POSTGRES_PASSWORD}"
+      vector_io:
+        - provider_id: pgvector
+          provider_type: remote::pgvector
+          config:
+            host: ${env.PGVECTOR_HOST:=postgresql.claims-demo.svc.cluster.local}
+            port: ${env.PGVECTOR_PORT:=5432}
+            db: ${env.PGVECTOR_DB:=claims_db}
+            user: ${env.POSTGRES_USER:=claims_user}
+            password: ${env.POSTGRES_PASSWORD:=claims_pass}
+            persistence:
+              backend: kv_default
+              namespace: vector_io::pgvector
 
-    # Vector DB for RAG (optional - if using builtin RAG)
-    memory_banks:
-      - provider_id: pgvector
-        provider_type: inline::pgvector
-        config:
-          host: "postgresql.claims-demo.svc.cluster.local"
+      safety:
+        - provider_id: trustyai_fms
+          provider_type: remote::trustyai_fms
+          module: llama_stack_provider_trustyai_fms==0.3.2
+          config:
+            orchestrator_url: https://claims-guardrails-claims-demo.apps.CLUSTER_DOMAIN
+            ssl_cert_path: ""
+            shields: {}
+
+      agents:
+        - provider_id: meta-reference
+          provider_type: inline::meta-reference
+          config:
+            persistence:
+              agent_state:
+                backend: kv_default
+                namespace: agents::meta_reference
+              responses:
+                backend: sql_default
+                table_name: agents_responses
+                max_write_queue_size: 10000
+                num_writers: 4
+
+      eval:
+        - provider_id: meta-reference-eval
+          provider_type: inline::meta-reference
+          config:
+            kvstore:
+              backend: kv_default
+              namespace: eval
+
+      datasetio:
+        - provider_id: huggingface
+          provider_type: remote::huggingface
+          config:
+            kvstore:
+              backend: kv_default
+              namespace: datasetio::huggingface
+
+      scoring:
+        - provider_id: basic
+          provider_type: inline::basic
+          config: {}
+        - provider_id: llm-as-judge
+          provider_type: inline::llm-as-judge
+          config: {}
+
+      tool_runtime:
+        - provider_id: rag-runtime
+          provider_type: inline::rag-runtime
+          config: {}
+        - provider_id: model-context-protocol
+          provider_type: remote::model-context-protocol
+          config: {}
+
+      files:
+        - provider_id: meta-reference-files
+          provider_type: inline::localfs
+          config:
+            storage_dir: /opt/app-root/src/.llama/distributions/rh/files
+            metadata_store:
+              backend: sql_default
+              table_name: files_metadata
+
+      batches:
+        - provider_id: reference
+          provider_type: inline::reference
+          config:
+            kvstore:
+              namespace: batches
+              backend: kv_default
+
+    storage:
+      backends:
+        kv_default:
+          type: kv_postgres
+          host: postgresql.claims-demo.svc.cluster.local
           port: 5432
-          db: "claims_db"
-          user: "claims_user"
-          password: "${POSTGRES_PASSWORD}"
+          db: claims_db
+          user: ${env.POSTGRES_USER:=claims_user}
+          password: ${env.POSTGRES_PASSWORD:=claims_pass}
+          table_name: llamastack_kvstore
+        sql_default:
+          type: sql_postgres
+          host: postgresql.claims-demo.svc.cluster.local
+          port: 5432
+          db: claims_db
+          user: ${env.POSTGRES_USER:=claims_user}
+          password: ${env.POSTGRES_PASSWORD:=claims_pass}
+      stores:
+        metadata:
+          backend: kv_default
+          namespace: registry
+        inference:
+          table_name: inference_store
+          backend: sql_default
+          max_write_queue_size: 10000
+          num_writers: 4
+        conversations:
+          table_name: openai_conversations
+          backend: sql_default
+        prompts:
+          namespace: prompts
+          backend: kv_default
+
+    registered_resources:
+      models:
+        - metadata: {}
+          model_id: llama-3-3-70b
+          provider_id: vllm-inference-1
+          provider_model_id: llama-3-3-70b
+          model_type: llm
+
+        - metadata:
+            embedding_dimension: 768
+          model_id: gemma-300m
+          provider_id: gemma-embedding
+          provider_model_id: gemma-300m
+          model_type: embedding
+
+      shields: []
+      vector_dbs:
+        - vector_db_id: claims_vector_db
+          provider_id: pgvector
+          embedding_model: gemma-300m
+          embedding_dimension: 768
+
+      datasets: []
+      scoring_fns: []
+      benchmarks: []
+
+      tool_groups:
+        - toolgroup_id: mcp::ocr-server
+          provider_id: model-context-protocol
+          mcp_endpoint:
+            uri: http://ocr-server.claims-demo.svc.cluster.local:8080/sse
+        - toolgroup_id: mcp::rag-server
+          provider_id: model-context-protocol
+          mcp_endpoint:
+            uri: http://rag-server.claims-demo.svc.cluster.local:8080/sse
+        - toolgroup_id: builtin::rag
+          provider_id: rag-runtime
+
+    telemetry:
+      enabled: true
+
+    server:
+      port: 8321

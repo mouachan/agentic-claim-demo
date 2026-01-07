@@ -1,6 +1,6 @@
 """
 MCP RAG Server - Vector retrieval using PostgreSQL + pgvector
-FastMCP implementation with SSE transport
+FastMCP implementation with Streamable HTTP transport (SSE)
 
 SIMPLE TOOLS: Return retrieved documents only.
 The LlamaStack agent handles all LLM synthesis and analysis.
@@ -11,6 +11,7 @@ FIXES APPLIED:
 - Embedding validation to prevent injection
 - Database connection check at startup
 - Proper error handling throughout
+- SSE transport compatible with LlamaStack
 """
 
 import asyncio
@@ -23,6 +24,9 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
+from starlette.responses import JSONResponse
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Configure logging
@@ -32,8 +36,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create FastMCP server
-mcp = FastMCP("rag-server")
+# Create FastMCP server with Streamable HTTP configuration (recommended)
+# stateless_http=True: server doesn't maintain session state
+# json_response=True: tools return JSON strings (optimal for scalability)
+mcp = FastMCP(
+    "rag-server",
+    stateless_http=True,
+    json_response=True
+)
 
 # Configuration
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgresql.claims-demo.svc.cluster.local")
@@ -569,14 +579,14 @@ async def search_knowledge_base(
 
 
 # =============================================================================
-# Health Check Endpoint (optional but recommended)
+# Health Check Tool and Endpoint
 # =============================================================================
 
 @mcp.tool()
-async def health_check() -> str:
+async def rag_health_check() -> str:
     """
-    Check server health and connectivity.
-    
+    Check RAG server health and connectivity.
+
     Returns:
         JSON string with health status
     """
@@ -584,7 +594,7 @@ async def health_check() -> str:
         "status": "healthy",
         "checks": {}
     }
-    
+
     # Check database
     try:
         await run_db_query_one(text("SELECT 1"), {})
@@ -592,7 +602,7 @@ async def health_check() -> str:
     except Exception as e:
         health["checks"]["database"] = f"error: {str(e)}"
         health["status"] = "unhealthy"
-    
+
     # Check embedding service
     try:
         await create_embedding("health check")
@@ -600,8 +610,54 @@ async def health_check() -> str:
     except Exception as e:
         health["checks"]["embedding_service"] = f"error: {str(e)}"
         health["status"] = "degraded"  # Can still work without embeddings for some queries
-    
+
     return json.dumps(health)
+
+
+# Health check endpoint for Kubernetes probes
+async def health_check(request):
+    """Simple health check endpoint for liveness/readiness probes"""
+    health_status = {
+        "status": "healthy",
+        "service": "rag-server",
+        "database_ready": False,
+        "embedding_ready": False
+    }
+
+    # Check database
+    try:
+        await run_db_query_one(text("SELECT 1"), {})
+        health_status["database_ready"] = True
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        health_status["status"] = "unhealthy"
+
+    # Check embedding service (non-critical)
+    try:
+        await create_embedding("test")
+        health_status["embedding_ready"] = True
+    except Exception as e:
+        logger.warning(f"Embedding service health check failed: {e}")
+        # Don't mark as unhealthy if only embeddings fail
+        if health_status["status"] == "healthy":
+            health_status["status"] = "degraded"
+
+    return JSONResponse(health_status)
+
+
+# =============================================================================
+# Starlette App with Health Check and MCP SSE
+# =============================================================================
+
+# Create wrapper app with health check and MCP SSE server
+mcp_sse_app = mcp.sse_app()
+
+app = Starlette(
+    routes=[
+        Route("/health", health_check),
+        Mount("/", app=mcp_sse_app),
+    ]
+)
 
 
 # =============================================================================
@@ -621,30 +677,17 @@ if __name__ == "__main__":
 
     port = int(os.getenv("PORT", "8080"))
     host = os.getenv("HOST", "0.0.0.0")
-    
-    logger.info(f"Starting MCP RAG Server (FastMCP) on {host}:{port}")
-    logger.info(f"SSE endpoint will be available at: http://{host}:{port}/sse")
+
+    logger.info(f"Starting MCP RAG Server (FastMCP SSE) on {host}:{port}")
     logger.info(f"Embedding model: {EMBEDDING_MODEL}")
     logger.info(f"LlamaStack endpoint: {LLAMASTACK_ENDPOINT}")
+    logger.info(f"Database: {POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}")
+    logger.info(f"MCP SSE endpoint will be available at: http://{host}:{port}/sse")
     logger.info("Tools:")
     logger.info("  - retrieve_user_info: Get user + contracts (vector search)")
     logger.info("  - retrieve_similar_claims: Find similar claims (vector search)")
     logger.info("  - search_knowledge_base: Search KB articles (vector search)")
-    logger.info("  - health_check: Check server health")
+    logger.info("  - rag_health_check: Check server health")
 
-    # Run FastMCP server with SSE transport
-    # SSE requires long-lived connections, so we configure uvicorn accordingly
-    uvicorn.run(
-        mcp.sse_app,
-        host=host,
-        port=port,
-        log_level=os.getenv("UVICORN_LOG_LEVEL", "info"),
-        # SSE-specific settings for persistent connections
-        timeout_keep_alive=300,      # Keep connection alive for 5 minutes
-        timeout_notify=30,           # Timeout for notifying the application
-        limit_concurrency=100,       # Maximum concurrent connections
-        limit_max_requests=None,     # No limit on requests per connection (important for SSE)
-        http="h11",                  # Use h11 HTTP implementation (better SSE support)
-        ws_max_size=16777216,        # 16MB max WebSocket message size
-        loop="asyncio",              # Explicitly use asyncio event loop
-    )
+    # Run uvicorn with FastMCP SSE app
+    uvicorn.run(app, host=host, port=port)

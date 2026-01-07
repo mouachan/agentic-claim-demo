@@ -24,8 +24,16 @@ spec:
           name: http
           protocol: TCP
         env:
-        - name: LLAMASTACK_ENDPOINT
-          value: "http://claims-llamastack-service.claims-demo.svc.cluster.local:8321"
+        - name: OCR_GPU_ENABLED
+          value: "false"
+        - name: OCR_LANGUAGES
+          value: "en,fr"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: PORT
+          value: "8080"
+        - name: HOST
+          value: "0.0.0.0"
         - name: PYTHONUNBUFFERED
           value: "1"
         volumeMounts:
@@ -33,23 +41,25 @@ spec:
           mountPath: /claim_documents
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "200m"
-          limits:
-            memory: "1Gi"
+            memory: "2Gi"
             cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
         livenessProbe:
           httpGet:
-            path: /health/live
-            port: 8080
-          initialDelaySeconds: 60
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health/live
+            path: /health
             port: 8080
           initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
           periodSeconds: 5
+          timeoutSeconds: 3
       volumes:
       - name: claim-documents
         persistentVolumeClaim:

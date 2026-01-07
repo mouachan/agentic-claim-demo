@@ -1,6 +1,6 @@
 """
 MCP OCR Server - Extract text from documents using EasyOCR
-FastMCP implementation with SSE transport
+FastMCP implementation with Streamable HTTP transport
 
 SIMPLE TOOL: Returns raw OCR text only.
 The LlamaStack agent handles all LLM analysis and structuring.
@@ -25,6 +25,9 @@ from typing import Tuple
 import easyocr
 from mcp.server.fastmcp import FastMCP
 from pdf2image import convert_from_path
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
+from starlette.responses import JSONResponse
 
 # Configure logging
 logging.basicConfig(
@@ -33,8 +36,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create FastMCP server
-mcp = FastMCP("ocr-server")
+# Create FastMCP server with Streamable HTTP configuration (recommended)
+# stateless_http=True: server doesn't maintain session state
+# json_response=True: tools return JSON strings (optimal for scalability)
+mcp = FastMCP(
+    "ocr-server",
+    stateless_http=True,
+    json_response=True
+)
+
+# Health check endpoint for Kubernetes probes
+async def health_check(request):
+    """Simple health check endpoint for liveness/readiness probes"""
+    return JSONResponse({
+        "status": "healthy",
+        "service": "ocr-server",
+        "ocr_ready": _ocr_reader is not None
+    })
+
+# Create wrapper app with health check and MCP SSE server
+mcp_sse_app = mcp.sse_app()
+
+app = Starlette(
+    routes=[
+        Route("/health", health_check),
+        Mount("/", app=mcp_sse_app),
+    ]
+)
 
 # Configuration
 OCR_LANGUAGES = os.getenv("OCR_LANGUAGES", "en,fr").split(",")
@@ -352,7 +380,7 @@ async def ocr_health_check() -> str:
     try:
         reader = await get_ocr_reader()
         health["checks"]["easyocr"] = "ok"
-        health["checks"]["easyocr_languages"] = reader.lang_list
+        health["checks"]["easyocr_languages"] = OCR_LANGUAGES
     except Exception as e:
         health["checks"]["easyocr"] = f"error: {str(e)}"
         health["status"] = "unhealthy"
@@ -385,33 +413,35 @@ async def list_supported_formats() -> str:
 
 
 if __name__ == "__main__":
+    import asyncio
     import uvicorn
 
     port = int(os.getenv("PORT", "8080"))
     host = os.getenv("HOST", "0.0.0.0")
-    
-    logger.info(f"Starting MCP OCR Server (FastMCP) on {host}:{port}")
-    logger.info(f"SSE endpoint will be available at: http://{host}:{port}/sse")
+
+    logger.info(f"Starting MCP OCR Server (FastMCP SSE) on {host}:{port}")
     logger.info(f"OCR Languages: {OCR_LANGUAGES}")
     logger.info(f"GPU Enabled: {OCR_GPU_ENABLED}")
     logger.info(f"Max PDF Pages: {MAX_PDF_PAGES}")
+
+    # Pre-initialize EasyOCR before starting server (ensures readiness)
+    logger.info("Pre-initializing EasyOCR reader...")
+    try:
+        async def init_ocr():
+            reader = await get_ocr_reader()
+            logger.info("✅ EasyOCR reader pre-initialized and ready")
+            return reader
+
+        asyncio.run(init_ocr())
+    except Exception as e:
+        logger.error(f"Failed to initialize EasyOCR: {e}")
+        raise
+
+    logger.info(f"MCP SSE endpoint will be available at: http://{host}:{port}/sse")
     logger.info("Tools:")
     logger.info("  - ocr_document: Extract raw text from documents")
     logger.info("  - ocr_health_check: Check server health")
     logger.info("  - list_supported_formats: List supported file formats")
 
-    # Run FastMCP server with SSE transport
-    # SSE requires long-lived connections, so we configure uvicorn accordingly
-    uvicorn.run(
-        mcp.sse_app,
-        host=host,
-        port=port,
-        log_level=os.getenv("UVICORN_LOG_LEVEL", "info"),
-        # SSE-specific settings for persistent connections
-        timeout_keep_alive=300,      # Keep connection alive for 5 minutes
-        limit_concurrency=100,       # Maximum concurrent connections
-        limit_max_requests=None,     # No limit on requests per connection (important for SSE)
-        http="h11",                  # Use h11 HTTP implementation (better SSE support)
-        ws_max_size=16777216,        # 16MB max WebSocket message size
-        loop="asyncio",              # Explicitly use asyncio event loop
-    )
+    # Run uvicorn with FastMCP SSE app
+    uvicorn.run(app, host=host, port=port)

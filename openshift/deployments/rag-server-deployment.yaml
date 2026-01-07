@@ -55,13 +55,15 @@ spec:
             cpu: "1"
         livenessProbe:
           httpGet:
-            path: /health/live
+            path: /health
             port: 8080
-          initialDelaySeconds: 90
+          initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 3
         readinessProbe:
           httpGet:
-            path: /health/ready
+            path: /health
             port: 8080
-          initialDelaySeconds: 45
+          initialDelaySeconds: 10
           periodSeconds: 5
+          timeoutSeconds: 3

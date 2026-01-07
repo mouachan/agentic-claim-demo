@@ -64,8 +64,8 @@ graph TB
 
         subgraph "OpenShift AI 3.0 - AI Services"
 
-            subgraph "AI Models - InferenceServices"
-                LLM["🦙 Llama 3.2 3B Instruct<br/>vLLM (2x L40 GPUs)<br/>Context: 32K tokens<br/>Service: llama-instruct-32-3b"]
+            subgraph "AI Models - InferenceServices<br/>Namespace: llama-3-3-70b"
+                LLM["🦙 Llama 3.3 70B INT8<br/>vLLM (4x L40 GPUs)<br/>Context: 20K tokens<br/>Tensor Parallel<br/>Service: llama-3-3-70b"]
             end
 
             subgraph "TrustyAI Guardrails"
@@ -134,7 +134,7 @@ graph TB
 - **Backend**: Python FastAPI
 - **AI Orchestration**: LlamaStack with ReActAgent (Reasoning + Acting)
 - **AI Models**:
-  - **Primary LLM**: Llama 3.2 3B Instruct (vLLM inference, 2 GPUs, 32K context)
+  - **Primary LLM**: Llama 3.3 70B INT8 (vLLM inference, 4 GPUs tensor parallel, 20K context)
   - **OCR Engine**: EasyOCR (embedded library, fast text extraction)
   - **Guardrails**:
     - Llama Guard 3 1B (content safety detection)
@@ -381,19 +381,20 @@ oc exec postgresql-0 -- psql -U claims_user -d claims_db -c "SELECT COUNT(*) FRO
 
 #### Step 3: Deploy vLLM Inference Model
 
-**3.1 Deploy Llama 3.2 3B with vLLM (2 GPUs, 32K context)**
+**3.1 Deploy Llama 3.3 70B INT8 with vLLM (4 GPUs tensor parallel, 20K context)**
 ```bash
-oc apply -f openshift/llama-32-3b-instruct/llama-3.2-3b-inferenceservice.yaml
+cd openshift/deployments/llama-3-3-70B
+./deploy.sh
 ```
 
-**3.2 Wait for model to load**
+**3.2 Wait for model to load** (takes ~10 minutes)
 ```bash
-oc wait --for=condition=ready pod -l serving.kserve.io/inferenceservice=llama-instruct-32-3b --timeout=600s
+oc wait --for=condition=ready pod -l app=llama-3-3-70b-predictor -n llama-3-3-70b --timeout=900s
 ```
 
 **3.3 Verify vLLM health**
 ```bash
-oc logs -l serving.kserve.io/inferenceservice=llama-instruct-32-3b --tail=50
+oc logs -l app=llama-3-3-70b-predictor -n llama-3-3-70b --tail=50
 ```
 
 #### Step 4: Deploy TrustyAI Guardrails
@@ -474,7 +475,7 @@ data:
       - provider_id: vllm-inference-1
         provider_type: remote::vllm
         config:
-          url: "http://llama-instruct-32-3b-predictor.edg-demo.svc.cluster.local:8000/v1"
+          url: "https://llama-3-3-70b-llama-3-3-70b.apps.CLUSTER_DOMAIN/v1"
 
     # MCP Tool Groups (CRITICAL for v0.3.5)
     toolgroups:
@@ -628,7 +629,7 @@ curl -X POST "https://${LLAMASTACK_URL}/v1/agents" \
   -H "Content-Type: application/json" \
   -d '{
     "agent_id": "test-agent",
-    "model": "vllm-inference-1/llama-instruct-32-3b",
+    "model": "vllm-inference-1/llama-3-3-70b",
     "instructions": "You are a helpful assistant.",
     "toolgroups": ["mcp::ocr-server", "mcp::rag-server"]
   }'
@@ -852,7 +853,7 @@ POSTGRES_PASSWORD=your_password
 
 # LlamaStack
 LLAMASTACK_ENDPOINT=http://localhost:8321
-LLAMASTACK_DEFAULT_MODEL=vllm-inference-1/llama-instruct-32-3b
+LLAMASTACK_DEFAULT_MODEL=vllm-inference-1/llama-3-3-70b
 
 # MCP Servers
 OCR_SERVER_URL=http://localhost:8080
@@ -913,7 +914,7 @@ agentic-claim-demo/
 ### AI & ML Stack
 - **LlamaStack**: AI orchestration platform
 - **vLLM**: High-performance LLM inference
-- **Llama 3.2 3B**: Language model (32K context window)
+- **Llama 3.3 70B INT8**: Language model (20K context window, tensor parallel)
 - **pgvector**: Vector similarity search
 - **MCP Protocol**: Standardized tool integration
 

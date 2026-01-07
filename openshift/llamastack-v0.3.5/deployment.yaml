@@ -60,4 +60,4 @@ spec:
       volumes:
       - name: config
         configMap:
-          name: llama-stack-config-v035
+          name: llamastack-test-v035-config
