@@ -1,44 +1,49 @@
-# FastAPI and server
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+# =============================================================================
+# Claims Processing Backend - Python Dependencies
+# =============================================================================
 
+# -----------------------------------------------------------------------------
+# Web Framework
+# -----------------------------------------------------------------------------
+fastapi>=0.109.0,<1.0.0
+uvicorn[standard]>=0.27.0,<1.0.0
+python-multipart>=0.0.6  # For file uploads
+
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+pydantic>=2.5.0,<3.0.0
+pydantic-settings>=2.1.0,<3.0.0
+
+# -----------------------------------------------------------------------------
 # Database
-sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
-alembic==1.13.1
-pgvector==0.2.4
+# -----------------------------------------------------------------------------
+sqlalchemy[asyncio]>=2.0.25,<3.0.0
+asyncpg>=0.29.0,<1.0.0          # Async PostgreSQL driver
+psycopg2-binary>=2.9.9,<3.0.0   # Sync driver for migrations
+pgvector>=0.2.4,<1.0.0          # Vector embeddings support
 
-# LlamaStack client (v0.3.0 compatible with server v0.3.0rc3+rhai0)
-llama-stack-client>=0.3.0
-fire==0.7.1
-requests==2.31.0
-httpx==0.26.0
-tenacity==8.2.3
+# -----------------------------------------------------------------------------
+# HTTP Client
+# -----------------------------------------------------------------------------
+httpx>=0.26.0,<1.0.0
 
-# MCP Protocol
-# Note: Install official MCP SDK when available
-# mcp==0.1.0
+# -----------------------------------------------------------------------------
+# LlamaStack SDK
+# -----------------------------------------------------------------------------
+llama-stack-client>=0.0.50
 
-# Pydantic for data validation
-pydantic==2.5.3
-pydantic-settings==2.1.0
+# -----------------------------------------------------------------------------
+# Utilities
+# -----------------------------------------------------------------------------
+python-dateutil>=2.8.2,<3.0.0
 
-# Authentication & Security
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-dotenv==1.0.0
+# -----------------------------------------------------------------------------
+# Optional: Rate Limiting (uncomment if needed)
+# -----------------------------------------------------------------------------
+# slowapi>=0.1.9,<1.0.0
 
-# Date/Time
-python-dateutil==2.8.2
-
-# Async support
-aiofiles==23.2.1
-asyncpg==0.29.0
-greenlet>=3.0.0
-
-# Logging
-python-json-logger==2.0.7
-
-# Monitoring
-prometheus-client==0.19.0
+# -----------------------------------------------------------------------------
+# Optional: Monitoring (uncomment if needed)
+# -----------------------------------------------------------------------------
+# prometheus-fastapi-instrumentator>=6.1.0,<7.0.0PyYAML==6.0.1

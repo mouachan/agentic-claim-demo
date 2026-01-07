@@ -1,15 +1,23 @@
 """
 SQLAlchemy models for claims and related entities.
+
+FIXES APPLIED:
+- Replaced datetime.utcnow with datetime.now(timezone.utc)
+- Using timezone-aware datetimes throughout
 """
 
-from datetime import datetime
-from typing import Optional
-from uuid import UUID, uuid4
+import enum
+from datetime import datetime, timezone
+from uuid import uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    ARRAY,
     JSON,
+    BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     Enum,
     Float,
@@ -18,23 +26,28 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    ARRAY,
-    Date,
-    BigInteger,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
-from pgvector.sqlalchemy import Vector
 
 from app.core.database import Base
 
-# Enums
-import enum
 
+# =============================================================================
+# Helper function for timezone-aware timestamps
+# =============================================================================
+
+def utc_now() -> datetime:
+    """Return current UTC time as timezone-aware datetime."""
+    return datetime.now(timezone.utc)
+
+
+# =============================================================================
+# Enums
+# =============================================================================
 
 class ClaimStatus(str, enum.Enum):
     """Claim processing status."""
-
     pending = "pending"
     processing = "processing"
     completed = "completed"
@@ -44,7 +57,6 @@ class ClaimStatus(str, enum.Enum):
 
 class ProcessingStep(str, enum.Enum):
     """Processing workflow steps."""
-
     ocr = "ocr"
     guardrails = "guardrails"
     rag_retrieval = "rag_retrieval"
@@ -54,11 +66,14 @@ class ProcessingStep(str, enum.Enum):
 
 class DecisionType(str, enum.Enum):
     """Claim decision types."""
-
     approve = "approve"
     deny = "deny"
     manual_review = "manual_review"
 
+
+# =============================================================================
+# Models
+# =============================================================================
 
 class Claim(Base):
     """Claim model."""
@@ -72,19 +87,21 @@ class Claim(Base):
     document_path = Column(Text, nullable=False)
     status = Column(
         Enum(ClaimStatus, native_enum=False),
-        default="pending",
+        default=ClaimStatus.pending,
         nullable=False,
         index=True,
     )
-    submitted_at = Column(DateTime, default=datetime.utcnow, index=True)
-    processed_at = Column(DateTime)
+    submitted_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+    processed_at = Column(DateTime(timezone=True))
     total_processing_time_ms = Column(Integer)
-    claim_metadata = Column("metadata", JSON, default={})  # Renamed to avoid conflict with SQLAlchemy metadata
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    claim_metadata = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     # Relationships
-    documents = relationship("ClaimDocument", back_populates="claim", cascade="all, delete-orphan")
+    documents = relationship(
+        "ClaimDocument", back_populates="claim", cascade="all, delete-orphan"
+    )
     processing_logs = relationship(
         "ProcessingLog", back_populates="claim", cascade="all, delete-orphan"
     )
@@ -102,7 +119,9 @@ class ClaimDocument(Base):
     __tablename__ = "claim_documents"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    claim_id = Column(PG_UUID(as_uuid=True), ForeignKey("claims.id"), nullable=False, index=True)
+    claim_id = Column(
+        PG_UUID(as_uuid=True), ForeignKey("claims.id"), nullable=False, index=True
+    )
     document_type = Column(String(100))
     file_path = Column(Text, nullable=False)
     file_size_bytes = Column(BigInteger)
@@ -112,7 +131,7 @@ class ClaimDocument(Base):
     raw_ocr_text = Column(Text)
     structured_data = Column(JSON)
     ocr_confidence = Column(Float)
-    ocr_processed_at = Column(DateTime)
+    ocr_processed_at = Column(DateTime(timezone=True))
 
     # Vector embedding for semantic search
     embedding = Column(Vector(768))  # 768 dimensions for all-mpnet-base-v2
@@ -120,10 +139,10 @@ class ClaimDocument(Base):
     # Metadata
     page_count = Column(Integer)
     language = Column(String(10), default="eng")
-    record_metadata = Column("metadata", JSON, default={})
+    record_metadata = Column("metadata", JSON, default=dict)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     # Relationship
     claim = relationship("Claim", back_populates="documents")
@@ -157,10 +176,10 @@ class UserContract(Base):
 
     # Status
     is_active = Column(Boolean, default=True, index=True)
-    record_metadata = Column("metadata", JSON, default={})
+    record_metadata = Column("metadata", JSON, default=dict)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
 class ProcessingLog(Base):
@@ -169,15 +188,15 @@ class ProcessingLog(Base):
     __tablename__ = "processing_logs"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    claim_id = Column(PG_UUID(as_uuid=True), ForeignKey("claims.id"), nullable=False, index=True)
-    step = Column(
-        Enum(ProcessingStep, native_enum=False), nullable=False, index=True
+    claim_id = Column(
+        PG_UUID(as_uuid=True), ForeignKey("claims.id"), nullable=False, index=True
     )
+    step = Column(Enum(ProcessingStep, native_enum=False), nullable=False, index=True)
     agent_name = Column(String(100))
 
     # Execution details
-    started_at = Column(DateTime, default=datetime.utcnow, index=True)
-    completed_at = Column(DateTime)
+    started_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+    completed_at = Column(DateTime(timezone=True))
     duration_ms = Column(Integer)
     status = Column(String(50))
 
@@ -190,8 +209,8 @@ class ProcessingLog(Base):
     confidence_score = Column(Float)
     tokens_used = Column(Integer)
 
-    record_metadata = Column("metadata", JSON, default={})
-    created_at = Column(DateTime, default=datetime.utcnow)
+    record_metadata = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
 
     # Relationship
     claim = relationship("Claim", back_populates="processing_logs")
@@ -203,7 +222,9 @@ class GuardrailsDetection(Base):
     __tablename__ = "guardrails_detections"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    claim_id = Column(PG_UUID(as_uuid=True), ForeignKey("claims.id"), nullable=False, index=True)
+    claim_id = Column(
+        PG_UUID(as_uuid=True), ForeignKey("claims.id"), nullable=False, index=True
+    )
     detection_type = Column(String(100), nullable=False, index=True)
     severity = Column(String(20), index=True)
 
@@ -215,10 +236,10 @@ class GuardrailsDetection(Base):
 
     # Action taken
     action_taken = Column(String(50))
-    detected_at = Column(DateTime, default=datetime.utcnow)
+    detected_at = Column(DateTime(timezone=True), default=utc_now)
 
-    record_metadata = Column("metadata", JSON, default={})
-    created_at = Column(DateTime, default=datetime.utcnow)
+    record_metadata = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
 
     # Relationship
     claim = relationship("Claim", back_populates="guardrails_detections")
@@ -230,12 +251,12 @@ class ClaimDecision(Base):
     __tablename__ = "claim_decisions"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    claim_id = Column(PG_UUID(as_uuid=True), ForeignKey("claims.id"), nullable=False, index=True)
+    claim_id = Column(
+        PG_UUID(as_uuid=True), ForeignKey("claims.id"), nullable=False, index=True
+    )
 
     # Decision
-    decision = Column(
-        Enum(DecisionType, native_enum=False), nullable=False, index=True
-    )
+    decision = Column(Enum(DecisionType, native_enum=False), nullable=False, index=True)
     confidence = Column(Float)
     reasoning = Column(Text)
 
@@ -253,11 +274,11 @@ class ClaimDecision(Base):
     requires_manual_review = Column(Boolean, default=False)
     manual_review_notes = Column(Text)
     reviewed_by = Column(String(255))
-    reviewed_at = Column(DateTime)
+    reviewed_at = Column(DateTime(timezone=True))
 
-    decided_at = Column(DateTime, default=datetime.utcnow, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    decided_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     # Relationship
     claim = relationship("Claim", back_populates="decision")
@@ -287,10 +308,10 @@ class KnowledgeBase(Base):
     source = Column(String(255))
     author = Column(String(255))
     last_reviewed = Column(Date)
-    record_metadata = Column("metadata", JSON, default={})
+    record_metadata = Column("metadata", JSON, default=dict)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
 class User(Base):
@@ -308,9 +329,9 @@ class User(Base):
 
     # Account status
     is_active = Column(Boolean, default=True, index=True)
-    account_created_at = Column(DateTime, default=datetime.utcnow)
-    last_login_at = Column(DateTime)
+    account_created_at = Column(DateTime(timezone=True), default=utc_now)
+    last_login_at = Column(DateTime(timezone=True))
 
-    record_metadata = Column("metadata", JSON, default={})
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    record_metadata = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

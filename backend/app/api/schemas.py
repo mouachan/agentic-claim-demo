@@ -1,17 +1,30 @@
 """
 Pydantic schemas for API requests and responses.
+
+FIXES APPLIED:
+- Replaced datetime.utcnow with timezone-aware datetime
 """
 
-from datetime import datetime
-from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
-# ============================================================================
+# =============================================================================
+# Helper for timezone-aware default
+# =============================================================================
+
+def utc_now() -> datetime:
+    """Return current UTC time as timezone-aware datetime."""
+    return datetime.now(timezone.utc)
+
+
+# =============================================================================
 # Claims Schemas
-# ============================================================================
+# =============================================================================
+
 class ClaimBase(BaseModel):
     user_id: str
     claim_number: str
@@ -25,7 +38,9 @@ class ClaimCreate(ClaimBase):
 
 class ClaimUpdate(BaseModel):
     status: Optional[str] = None
-    claim_metadata: Optional[Dict[str, Any]] = Field(default=None, serialization_alias="metadata")
+    claim_metadata: Optional[Dict[str, Any]] = Field(
+        default=None, serialization_alias="metadata"
+    )
 
 
 class ClaimResponse(ClaimBase):
@@ -34,7 +49,9 @@ class ClaimResponse(ClaimBase):
     submitted_at: datetime
     processed_at: Optional[datetime] = None
     total_processing_time_ms: Optional[int] = None
-    claim_metadata: Dict[str, Any] = Field(default_factory=dict, serialization_alias="metadata")
+    claim_metadata: Dict[str, Any] = Field(
+        default_factory=dict, serialization_alias="metadata"
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -50,11 +67,15 @@ class ClaimListResponse(BaseModel):
     page_size: int
 
 
-# ============================================================================
+# =============================================================================
 # Processing Schemas
-# ============================================================================
+# =============================================================================
+
 class ProcessClaimRequest(BaseModel):
-    workflow_type: str = Field(default="standard", description="Workflow type: standard, expedited, manual_review")
+    workflow_type: str = Field(
+        default="standard",
+        description="Workflow type: standard, expedited, manual_review"
+    )
     skip_ocr: bool = False
     skip_guardrails: bool = False
     enable_rag: bool = True
@@ -64,9 +85,9 @@ class ProcessingStepLog(BaseModel):
     step_name: str
     agent_name: str
     status: str
-    duration_ms: int
-    started_at: datetime
-    completed_at: Optional[datetime]
+    duration_ms: Optional[int] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
     output_data: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
 
@@ -81,10 +102,10 @@ class ProcessClaimResponse(BaseModel):
 class ClaimStatusResponse(BaseModel):
     claim_id: UUID
     status: str
-    current_step: Optional[str]
+    current_step: Optional[str] = None
     progress_percentage: float
     processing_steps: List[ProcessingStepLog]
-    estimated_completion_time: Optional[datetime]
+    estimated_completion_time: Optional[datetime] = None
 
 
 class ClaimLogsResponse(BaseModel):
@@ -92,9 +113,10 @@ class ClaimLogsResponse(BaseModel):
     logs: List[ProcessingStepLog]
 
 
-# ============================================================================
+# =============================================================================
 # Decision Schemas
-# ============================================================================
+# =============================================================================
+
 class ClaimDecisionResponse(BaseModel):
     id: UUID
     claim_id: UUID
@@ -104,7 +126,7 @@ class ClaimDecisionResponse(BaseModel):
     relevant_policies: Optional[Dict[str, Any]] = None
     similar_claims: Optional[Dict[str, Any]] = None
     user_contract_info: Optional[Dict[str, Any]] = None
-    llm_model: Optional[str]
+    llm_model: Optional[str] = None
     requires_manual_review: bool
     decided_at: datetime
 
@@ -112,9 +134,10 @@ class ClaimDecisionResponse(BaseModel):
         from_attributes = True
 
 
-# ============================================================================
+# =============================================================================
 # Document Schemas
-# ============================================================================
+# =============================================================================
+
 class DocumentUploadResponse(BaseModel):
     document_id: UUID
     file_path: str
@@ -126,27 +149,28 @@ class DocumentUploadResponse(BaseModel):
 class DocumentResponse(BaseModel):
     id: UUID
     claim_id: UUID
-    document_type: Optional[str]
+    document_type: Optional[str] = None
     file_path: str
-    file_size_bytes: Optional[int]
-    mime_type: Optional[str]
-    raw_ocr_text: Optional[str]
-    structured_data: Optional[Dict[str, Any]]
-    ocr_confidence: Optional[float]
+    file_size_bytes: Optional[int] = None
+    mime_type: Optional[str] = None
+    raw_ocr_text: Optional[str] = None
+    structured_data: Optional[Dict[str, Any]] = None
+    ocr_confidence: Optional[float] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-# ============================================================================
+# =============================================================================
 # User Schemas
-# ============================================================================
+# =============================================================================
+
 class UserResponse(BaseModel):
     id: UUID
     user_id: str
-    email: Optional[str]
-    full_name: Optional[str]
+    email: Optional[str] = None
+    full_name: Optional[str] = None
     is_active: bool
     created_at: datetime
 
@@ -158,20 +182,21 @@ class UserContractResponse(BaseModel):
     id: UUID
     user_id: str
     contract_number: str
-    contract_type: Optional[str]
-    coverage_amount: Optional[float]
-    premium_amount: Optional[float]
+    contract_type: Optional[str] = None
+    coverage_amount: Optional[float] = None
+    premium_amount: Optional[float] = None
     is_active: bool
-    start_date: Optional[datetime]
-    end_date: Optional[datetime]
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
 
     class Config:
         from_attributes = True
 
 
-# ============================================================================
+# =============================================================================
 # Statistics Schemas
-# ============================================================================
+# =============================================================================
+
 class ClaimStatistics(BaseModel):
     total_claims: int
     pending_claims: int
@@ -179,13 +204,14 @@ class ClaimStatistics(BaseModel):
     completed_claims: int
     failed_claims: int
     manual_review_claims: int
-    average_processing_time_ms: Optional[float]
+    average_processing_time_ms: Optional[float] = None
 
 
-# ============================================================================
+# =============================================================================
 # Error Schemas
-# ============================================================================
+# =============================================================================
+
 class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)

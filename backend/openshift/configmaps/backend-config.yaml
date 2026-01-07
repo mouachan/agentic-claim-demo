@@ -26,8 +26,8 @@ data:
   DATABASE_MAX_OVERFLOW: "20"
   
   # LlamaStack Configuration (OpenShift AI)
-  LLAMASTACK_ENDPOINT: "http://claims-llamastack-service.claims-demo.svc.cluster.local:8321"
-  LLAMASTACK_DEFAULT_MODEL: "vllm-inference-1/llama-instruct-32-3b"
+  LLAMASTACK_ENDPOINT: "http://llamastack-test-v035.claims-demo.svc.cluster.local:8321"
+  LLAMASTACK_DEFAULT_MODEL: "vllm-inference-1/llama-3-3-70b"
   LLAMASTACK_EMBEDDING_MODEL: "sentence-transformers/all-mpnet-base-v2"
   LLAMASTACK_EMBEDDING_DIMENSION: "768"
   LLAMASTACK_TIMEOUT: "300"

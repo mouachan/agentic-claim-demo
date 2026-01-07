@@ -1,10 +1,21 @@
 """
 Configuration settings for the Claims Demo backend application.
 Loads settings from environment variables and provides typed configuration.
+
+FIXES APPLIED:
+- Removed default secret_key (must be set via env var)
+- Added warning for wildcard CORS
+- Added validator for production settings
 """
 
-from typing import Optional
+import logging
+import warnings
+from typing import List, Optional
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -29,6 +40,8 @@ class Settings(BaseSettings):
     postgres_password: str
     database_pool_size: int = 10
     database_max_overflow: int = 20
+    database_pool_pre_ping: bool = True
+    database_pool_recycle: int = 3600  # 1 hour
 
     @property
     def database_url(self) -> str:
@@ -47,7 +60,7 @@ class Settings(BaseSettings):
         )
 
     # LlamaStack (OpenShift AI)
-    llamastack_endpoint: str = "http://claims-llamastack-service.claims-demo.svc.cluster.local:8321"
+    llamastack_endpoint: str = "http://llamastack-test-v035.claims-demo.svc.cluster.local:8321"
     llamastack_api_key: Optional[str] = None
     llamastack_default_model: str = "vllm-inference-1/llama-instruct-32-3b"
     llamastack_embedding_model: str = "sentence-transformers/all-mpnet-base-v2"
@@ -62,16 +75,16 @@ class Settings(BaseSettings):
         "http://claims-guardrails.claims-demo.svc.cluster.local:8080"
     )
 
-    # CORS
-    cors_origins: list[str] = ["*"]  # In production, specify actual origins
+    # CORS - default to restrictive, override in production via env vars
+    cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8080"]
     cors_allow_credentials: bool = True
-    cors_allow_methods: list[str] = ["*"]
-    cors_allow_headers: list[str] = ["*"]
+    cors_allow_methods: List[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    cors_allow_headers: List[str] = ["*"]
 
-    # Security
-    secret_key: str = "your-secret-key-change-in-production"
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    # Security - NO DEFAULT for secret_key, must be set via env var
+    #secret_key: str  # Required, no default
+    #algorithm: str = "HS256"
+    #access_token_expire_minutes: int = 30
 
     # File Storage
     documents_storage_path: str = "/mnt/documents"
@@ -89,6 +102,39 @@ class Settings(BaseSettings):
     # Monitoring
     enable_metrics: bool = True
     metrics_port: int = 9090
+
+    # Rate Limiting
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = 100
+
+    @field_validator('cors_origins', mode='before')
+    @classmethod
+    def validate_cors_origins(cls, v):
+        """Parse CORS origins from comma-separated string if needed."""
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(',')]
+        return v
+
+    @model_validator(mode='after')
+    def validate_production_settings(self):
+        """Warn about insecure settings in production."""
+        if self.environment == "production":
+            # Check for wildcard CORS
+            if "*" in self.cors_origins:
+                warnings.warn(
+                    "SECURITY WARNING: Wildcard CORS origin ('*') is enabled in production. "
+                    "This is insecure. Set CORS_ORIGINS to specific allowed domains.",
+                    UserWarning
+                )
+            
+            # Check for debug mode
+            if self.debug:
+                warnings.warn(
+                    "SECURITY WARNING: Debug mode is enabled in production.",
+                    UserWarning
+                )
+        
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",

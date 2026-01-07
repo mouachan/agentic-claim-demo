@@ -6,6 +6,7 @@ Prompts can be loaded from ConfigMaps mounted at /app/prompts/ or from default v
 """
 
 import os
+import yaml
 from pathlib import Path
 
 # Prompt directory (can be mounted from ConfigMap)
@@ -360,6 +361,45 @@ Be professional, accurate, and prioritize the user's interests while following p
 """
 
 
+# User message templates (defaults)
+_USER_MESSAGE_OCR_ONLY_DEFAULT = """
+Extract text from this document: {document_path}
+
+Step 1: Call the ocr_document tool to extract the text.
+Step 2: After you receive the OCR results, summarize what was extracted and the confidence score.
+
+Provide a brief summary of the extracted content.
+"""
+
+_USER_MESSAGE_FULL_WORKFLOW_DEFAULT = """
+Process this insurance claim:
+
+Claim ID: {claim_id}
+User ID: {user_id}
+Document Path: {document_path}
+Claim Type: {claim_type}
+
+Please:
+1. Extract all information from the document using OCR
+2. Retrieve the user's insurance contracts and coverage details
+3. Find similar historical claims for precedent
+4. Determine if the claim should be approved, denied, or requires manual review
+5. Provide detailed reasoning citing relevant policy sections
+
+Return your final decision as JSON:
+{{
+    "recommendation": "approve" | "deny" | "manual_review",
+    "confidence": 0.0-1.0,
+    "reasoning": "detailed explanation",
+    "relevant_policies": ["policy1", "policy2"],
+    "estimated_coverage_amount": 1234.56
+}}
+
+Workflow configuration:
+- Skip OCR: {skip_ocr}
+- Enable RAG retrieval: {enable_rag}
+"""
+
 # Load ALL prompts from ConfigMap files (if mounted) or use defaults
 OCR_VALIDATION_PROMPT = load_prompt("ocr-validation.txt", _OCR_VALIDATION_DEFAULT)
 CLAIM_ANALYSIS_PROMPT = load_prompt("claim-analysis.txt", _CLAIM_ANALYSIS_DEFAULT)
@@ -371,6 +411,45 @@ CLAIMS_PROCESSING_AGENT_INSTRUCTIONS = load_prompt(
     "claims-processing-agent.txt",
     _CLAIMS_PROCESSING_AGENT_DEFAULT
 )
+
+# User message templates
+USER_MESSAGE_OCR_ONLY_TEMPLATE = load_prompt(
+    "user-message-ocr-only.txt",
+    _USER_MESSAGE_OCR_ONLY_DEFAULT
+)
+USER_MESSAGE_FULL_WORKFLOW_TEMPLATE = load_prompt(
+    "user-message-full-workflow.txt",
+    _USER_MESSAGE_FULL_WORKFLOW_DEFAULT
+)
+
+
+def load_agent_config() -> dict:
+    """
+    Load agent configuration from ConfigMap or use defaults.
+
+    Returns:
+        Dictionary with agent configuration
+    """
+    config_file = PROMPTS_DIR / "agent-config.yaml"
+    default_config = {
+        "tool_choice": "auto",
+        "tool_prompt_format": "json",
+        "max_infer_iters": 8,
+        "sampling_strategy": "greedy",
+        "max_tokens": 2048,
+        "enable_session_persistence": True
+    }
+
+    if config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                loaded_config = yaml.safe_load(f) or {}
+                # Merge with defaults (loaded values override defaults)
+                return {**default_config, **loaded_config}
+        except Exception as e:
+            print(f"Warning: Could not load agent config from {config_file}: {e}. Using defaults.")
+            return default_config
+    return default_config
 
 
 def format_prompt(template: str, **kwargs) -> str:
@@ -385,3 +464,7 @@ def format_prompt(template: str, **kwargs) -> str:
         Formatted prompt string
     """
     return template.format(**kwargs)
+
+
+# Load agent configuration
+AGENT_CONFIG = load_agent_config()

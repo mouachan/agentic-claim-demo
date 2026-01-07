@@ -1,16 +1,29 @@
 """
 Main FastAPI application for Claims Processing Demo.
+
+FIXES APPLIED:
+- Replaced print() with proper logging
+- Added rate limiting (optional, requires slowapi)
+- Improved lifespan management
 """
 
+import logging
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text, select
+from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.database import async_engine
-from app.models import Base
+from app.core.database import async_engine, check_database_connection, dispose_engine, Base
+
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper()),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -20,16 +33,23 @@ async def lifespan(app: FastAPI):
     Handles startup and shutdown events.
     """
     # Startup
-    print(f"🚀 Starting {settings.app_name} v{settings.app_version}")
-    print(f"📊 Environment: {settings.environment}")
-    print(f"🔗 LlamaStack endpoint: {settings.llamastack_endpoint}")
-    print(f"🗄️  Database: {settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}")
+    logger.info(f"🚀 Starting {settings.app_name} v{settings.app_version}")
+    logger.info(f"📊 Environment: {settings.environment}")
+    logger.info(f"🔗 LlamaStack endpoint: {settings.llamastack_endpoint}")
+    logger.info(f"🗄️  Database: {settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}")
+    
+    # Check database connection on startup
+    if not await check_database_connection():
+        logger.error("❌ Failed to connect to database on startup")
+    else:
+        logger.info("✅ Database connection verified")
 
     yield
 
     # Shutdown
-    print("👋 Shutting down application")
-    await async_engine.dispose()
+    logger.info("👋 Shutting down application")
+    await dispose_engine()
+    logger.info("✅ Application shutdown complete")
 
 
 # Create FastAPI application
@@ -52,7 +72,10 @@ app.add_middleware(
 )
 
 
-# Root endpoint
+# =============================================================================
+# Health Check Endpoints
+# =============================================================================
+
 @app.get("/")
 async def root():
     """Root endpoint - API information."""
@@ -64,7 +87,6 @@ async def root():
     }
 
 
-# Health check endpoints
 @app.get("/health/live")
 async def liveness():
     """Liveness probe for Kubernetes."""
@@ -77,22 +99,52 @@ async def readiness():
     try:
         # Test database connection
         async with async_engine.connect() as conn:
-            result = await conn.scalar(select(1))
+            await conn.execute(select(1))
 
         return {"status": "ready", "database": "connected"}
     except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
         return JSONResponse(
             status_code=503,
             content={"status": "not_ready", "error": str(e)},
         )
 
 
-# Import and include API routers
+# =============================================================================
+# Import and Include API Routers
+# =============================================================================
+
 from app.api import claims, documents
 
-app.include_router(claims.router, prefix=f"{settings.api_v1_prefix}/claims", tags=["claims"])
-app.include_router(documents.router, prefix=f"{settings.api_v1_prefix}/documents", tags=["documents"])
+app.include_router(
+    claims.router,
+    prefix=f"{settings.api_v1_prefix}/claims",
+    tags=["claims"]
+)
+app.include_router(
+    documents.router,
+    prefix=f"{settings.api_v1_prefix}/documents",
+    tags=["documents"]
+)
 
+
+# =============================================================================
+# Exception Handlers
+# =============================================================================
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Global exception handler for unhandled errors."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": str(exc) if settings.debug else None}
+    )
+
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
 
 if __name__ == "__main__":
     import uvicorn

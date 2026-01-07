@@ -8,6 +8,7 @@ export default function ClaimDetailPage() {
   const [claim, setClaim] = useState<Claim | null>(null)
   const [status, setStatus] = useState<ClaimStatusResponse | null>(null)
   const [decision, setDecision] = useState<ClaimDecision | null>(null)
+  const [logs, setLogs] = useState<ProcessingStepLog[]>([])
   const [loading, setLoading] = useState(true)
   const [processing, setProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -38,6 +39,16 @@ export default function ClaimDetailPage() {
 
       setClaim(claimData)
       setStatus(statusData)
+
+      // Load processing logs if claim has been processed
+      if (['processing', 'completed', 'manual_review', 'failed'].includes(claimData.status)) {
+        try {
+          const logsData = await claimsApi.getClaimLogs(claimId)
+          setLogs(logsData.logs || [])
+        } catch (err) {
+          console.error('Error loading logs:', err)
+        }
+      }
 
       // Load decision if processed (completed, manual_review, or failed)
       if (['completed', 'manual_review', 'failed'].includes(claimData.status)) {
@@ -75,6 +86,12 @@ export default function ClaimDetailPage() {
 
         setClaim(claimData)
         setStatus(statusData)
+
+        // Load logs if claim has been processed
+        if (['processing', 'completed', 'manual_review', 'failed'].includes(claimData.status)) {
+          const logsData = await claimsApi.getClaimLogs(claimId)
+          setLogs(logsData.logs || [])
+        }
 
         // Stop polling if no longer processing
         if (claimData.status !== 'processing') {
@@ -219,9 +236,9 @@ export default function ClaimDetailPage() {
         </div>
 
         {/* Claim Subject - extracted from OCR if available */}
-        {status && status.processing_steps.length > 0 && (
+        {logs.length > 0 && (
           (() => {
-            const ocrStep = status.processing_steps.find((s: ProcessingStepLog) => s.step_name === 'ocr')
+            const ocrStep = logs.find((s: ProcessingStepLog) => s.step_name === 'ocr')
             const ocrData = ocrStep?.output_data?.structured_data?.fields
             if (ocrData) {
               const diagnosis = ocrData.diagnosis?.value || ocrData.service?.value
@@ -303,11 +320,11 @@ export default function ClaimDetailPage() {
       </div>
 
       {/* Processing Status */}
-      {status && status.processing_steps.length > 0 && (
+      {logs.length > 0 && (
         <div className="bg-white shadow rounded-lg p-6">
-          <h3 className="text-xl font-bold text-gray-900 mb-4">Processing Status</h3>
+          <h3 className="text-xl font-bold text-gray-900 mb-4">Processing Steps</h3>
 
-          {status.current_step && (
+          {status && status.current_step && (
             <div className="mb-4 p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-gray-600">Current Step</p>
               <p className="text-lg font-medium text-gray-900">{status.current_step}</p>
@@ -324,7 +341,7 @@ export default function ClaimDetailPage() {
           )}
 
           <div className="space-y-4">
-            {status.processing_steps.map((step: ProcessingStepLog, index: number) => (
+            {logs.map((step: ProcessingStepLog, index: number) => (
               <div key={index} className="border border-gray-200 rounded-lg p-4">
                 <div className="flex items-start">
                   <div className="flex-shrink-0 mt-1">
@@ -352,61 +369,111 @@ export default function ClaimDetailPage() {
                         <p className="text-sm text-red-800">Error: {step.error_message}</p>
                       </div>
                     )}
-                    {step.output_data && step.step_name === 'ocr' && step.output_data.structured_data && (
-                      <div className="mt-3 p-3 bg-blue-50 rounded-lg">
-                        <p className="text-sm font-medium text-gray-700 mb-2">Extracted Information:</p>
-                        <div className="grid grid-cols-2 gap-2 text-sm">
+                    {/* OCR Document Output */}
+                    {step.output_data && step.step_name === 'ocr_document' && step.output_data.structured_data && (
+                      <div className="mt-3 p-4 bg-blue-50 border-l-4 border-blue-400 rounded-r-lg">
+                        <p className="text-sm font-semibold text-blue-900 mb-3">📄 Document Information Extracted</p>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
                           {Object.entries(step.output_data.structured_data.fields || {}).map(([key, value]: [string, any]) => (
-                            <div key={key}>
-                              <span className="text-gray-600">{key.replace(/_/g, ' ')}:</span>
-                              <span className="ml-1 font-medium text-gray-900">{value.value || 'N/A'}</span>
+                            <div key={key} className="bg-white p-2 rounded">
+                              <span className="text-gray-600 text-xs uppercase">{key.replace(/_/g, ' ')}</span>
+                              <p className="font-semibold text-gray-900">{value.value || 'N/A'}</p>
                             </div>
                           ))}
                         </div>
-                        <p className="text-xs text-gray-500 mt-2">
-                          Confidence: {((step.output_data.confidence || 0) * 100).toFixed(0)}%
+                        <p className="text-xs text-blue-700 mt-3 font-medium">
+                          ✓ Extraction Confidence: {((step.output_data.confidence || 0) * 100).toFixed(0)}%
                         </p>
                       </div>
                     )}
-                    {step.output_data && step.step_name === 'rag_retrieval' && step.output_data.user_info && (
-                      <div className="mt-3 p-3 bg-green-50 rounded-lg">
-                        <p className="text-sm font-medium text-gray-700 mb-2">Retrieved Information:</p>
-                        <div className="text-sm space-y-1">
-                          {step.output_data.user_info.user_info && (
-                            <>
-                              <p><span className="text-gray-600">User:</span> <span className="font-medium">{step.output_data.user_info.user_info.full_name || step.output_data.user_info.user_info.user_id}</span></p>
-                              <p><span className="text-gray-600">Contracts found:</span> <span className="font-medium">{step.output_data.user_info.contracts?.length || 0}</span></p>
-                            </>
-                          )}
-                          <p><span className="text-gray-600">Similar claims:</span> <span className="font-medium">{step.output_data.similar_claims?.length || 0}</span></p>
-                        </div>
-                      </div>
-                    )}
-                    {step.output_data && step.step_name === 'llm_decision' && (
-                      <div className="mt-3 p-3 bg-purple-50 rounded-lg">
-                        <p className="text-sm font-medium text-gray-700 mb-2">LLM Decision:</p>
-                        <div className="text-sm space-y-1">
-                          <p><span className="text-gray-600">Recommendation:</span> <span className={`font-bold ml-1 ${
-                            step.output_data.recommendation === 'approve' ? 'text-green-600' :
-                            step.output_data.recommendation === 'deny' ? 'text-red-600' :
-                            'text-orange-600'
-                          }`}>{step.output_data.recommendation?.toUpperCase()}</span></p>
-                          <p><span className="text-gray-600">Confidence:</span> <span className="font-medium ml-1">{((step.output_data.confidence || 0) * 100).toFixed(0)}%</span></p>
-                          {step.output_data.reasoning && (
-                            <div className="mt-2 pt-2 border-t border-purple-200">
-                              <p className="text-gray-600 mb-1">Reasoning:</p>
-                              <p className="text-gray-800">{step.output_data.reasoning}</p>
+
+                    {/* Retrieve User Info Output */}
+                    {step.output_data && step.step_name === 'retrieve_user_info' && (
+                      <div className="mt-3 p-4 bg-green-50 border-l-4 border-green-400 rounded-r-lg">
+                        <p className="text-sm font-semibold text-green-900 mb-3">👤 User Insurance Coverage Retrieved</p>
+                        <div className="text-sm space-y-2">
+                          {step.output_data.user_info && (
+                            <div className="bg-white p-3 rounded">
+                              <p className="text-xs text-gray-600 uppercase mb-1">User</p>
+                              <p className="font-semibold text-gray-900">{step.output_data.user_info.full_name || step.output_data.user_info.user_id || 'Unknown'}</p>
                             </div>
                           )}
+                          {step.output_data.contracts && step.output_data.contracts.length > 0 && (
+                            <div className="bg-white p-3 rounded">
+                              <p className="text-xs text-gray-600 uppercase mb-2">Active Contracts ({step.output_data.contracts.length})</p>
+                              {step.output_data.contracts.map((contract: any, idx: number) => (
+                                <div key={idx} className="mb-2 last:mb-0 pb-2 last:pb-0 border-b last:border-b-0 border-gray-200">
+                                  <p className="font-semibold text-gray-900">{contract.contract_id || `Contract ${idx + 1}`}</p>
+                                  {contract.coverage_amount && <p className="text-sm text-gray-700">Coverage: ${Number(contract.coverage_amount).toLocaleString()}</p>}
+                                  {contract.policy_type && <p className="text-xs text-gray-600">Type: {contract.policy_type}</p>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <p className="text-xs text-green-700 font-medium">
+                            ✓ Total Documents: {step.output_data.total_found || 0}
+                          </p>
                         </div>
                       </div>
                     )}
-                    {step.output_data && !['ocr', 'rag_retrieval', 'llm_decision'].includes(step.step_name) && (
+
+                    {/* Retrieve Similar Claims Output */}
+                    {step.output_data && step.step_name === 'retrieve_similar_claims' && (
+                      <div className="mt-3 p-4 bg-purple-50 border-l-4 border-purple-400 rounded-r-lg">
+                        <p className="text-sm font-semibold text-purple-900 mb-3">🔍 Historical Similar Claims</p>
+                        {step.output_data.claims && step.output_data.claims.length > 0 ? (
+                          <div className="space-y-2">
+                            {step.output_data.claims.slice(0, 3).map((claim: any, idx: number) => (
+                              <div key={idx} className="bg-white p-3 rounded text-sm">
+                                <p className="font-semibold text-gray-900">{claim.claim_id || `Claim ${idx + 1}`}</p>
+                                <p className="text-xs text-gray-600 mt-1">Decision: <span className="font-medium">{claim.decision || 'N/A'}</span></p>
+                                {claim.similarity_score && <p className="text-xs text-purple-700">Match: {(claim.similarity_score * 100).toFixed(0)}%</p>}
+                              </div>
+                            ))}
+                            <p className="text-xs text-purple-700 font-medium mt-2">
+                              ✓ Found {step.output_data.total_found || step.output_data.claims.length} similar claims
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="bg-white p-3 rounded text-sm text-gray-600">
+                            <p>⚠️ No similar historical claims found</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Search Knowledge Base Output */}
+                    {step.output_data && step.step_name === 'search_knowledge_base' && (
+                      <div className="mt-3 p-4 bg-amber-50 border-l-4 border-amber-400 rounded-r-lg">
+                        <p className="text-sm font-semibold text-amber-900 mb-3">📚 Knowledge Base Search</p>
+                        {step.output_data.articles && step.output_data.articles.length > 0 ? (
+                          <div className="space-y-2">
+                            {step.output_data.articles.slice(0, 3).map((article: any, idx: number) => (
+                              <div key={idx} className="bg-white p-3 rounded text-sm">
+                                <p className="font-semibold text-gray-900">{article.title || article.section || `Article ${idx + 1}`}</p>
+                                {article.content && <p className="text-xs text-gray-600 mt-1 line-clamp-2">{article.content}</p>}
+                                {article.relevance_score && <p className="text-xs text-amber-700 mt-1">Relevance: {(article.relevance_score * 100).toFixed(0)}%</p>}
+                              </div>
+                            ))}
+                            <p className="text-xs text-amber-700 font-medium mt-2">
+                              ✓ Found {step.output_data.total_found || step.output_data.articles.length} relevant articles
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="bg-white p-3 rounded text-sm text-gray-600">
+                            <p>⚠️ No relevant knowledge base articles found</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Fallback for other tools */}
+                    {step.output_data && !['ocr_document', 'retrieve_user_info', 'retrieve_similar_claims', 'search_knowledge_base'].includes(step.step_name) && (
                       <details className="mt-2">
-                        <summary className="text-sm text-blue-600 cursor-pointer hover:text-blue-800">
-                          View Raw Output Data
+                        <summary className="text-sm text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
+                          📋 View Tool Output
                         </summary>
-                        <pre className="mt-2 p-2 bg-gray-50 rounded text-xs overflow-auto max-h-60">
+                        <pre className="mt-2 p-3 bg-gray-50 border border-gray-200 rounded text-xs overflow-auto max-h-60">
                           {JSON.stringify(step.output_data, null, 2)}
                         </pre>
                       </details>
@@ -424,7 +491,7 @@ export default function ClaimDetailPage() {
         <div className="bg-white shadow rounded-lg p-6">
           <h3 className="text-xl font-bold text-gray-900 mb-4">Claim Decision</h3>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <p className="text-sm text-gray-600">Decision</p>
               <p className={`text-2xl font-bold mt-1 ${
@@ -441,6 +508,14 @@ export default function ClaimDetailPage() {
                 {(decision.confidence * 100).toFixed(1)}%
               </p>
             </div>
+            {decision.relevant_policies?.estimated_coverage && (
+              <div>
+                <p className="text-sm text-gray-600">Estimated Coverage</p>
+                <p className="text-2xl font-bold mt-1 text-blue-600">
+                  ${Number(decision.relevant_policies.estimated_coverage).toLocaleString()}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="mt-6">
