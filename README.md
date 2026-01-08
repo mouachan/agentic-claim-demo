@@ -963,10 +963,12 @@ agentic-claim-demo/
 ## Performance Considerations
 
 ### vLLM Configuration
-- **GPUs**: 2x NVIDIA L40 (48GB each)
-- **Tensor Parallelism**: Enabled for model distribution
-- **Context Length**: 32K tokens
+- **GPUs**: 4x NVIDIA L40 (48GB each) = 192GB total VRAM
+- **Tensor Parallelism**: TP=4 for model distribution across GPUs
+- **Quantization**: INT8 model weights + FP8 KV cache
+- **Context Length**: 20K tokens
 - **GPU Memory Utilization**: 75% (optimized for stability)
+- **Per-GPU Usage**: ~24-26GB (model + KV cache + activations)
 
 ### Database Optimization
 - **pgvector HNSW Index**: Fast similarity search
