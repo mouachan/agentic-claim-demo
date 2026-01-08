@@ -22,7 +22,7 @@ The system now uses **Gemma-300m** (768-dim) for generating embeddings instead o
 
 - **Endpoint**: `https://embeddinggemma-300m-edg-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>`
 - **Vector Store**: LlamaStack with pgvector backend
-- **Configured in**: `openshift/configmaps/llama-stack-config.yaml`
+- **Configured in**: `openshift/llamastack-v0.3.5/llama-stack-config.yaml` (active deployment)
 
 ### RAG Architecture Clarification: Builtin vs Custom
 
@@ -64,8 +64,9 @@ graph TB
 
         subgraph "OpenShift AI 3.0 - AI Services"
 
-            subgraph "AI Models - InferenceServices<br/>Namespace: llama-3-3-70b"
-                LLM["🦙 Llama 3.3 70B INT8<br/>vLLM (4x L40 GPUs)<br/>Context: 20K tokens<br/>Tensor Parallel<br/>Service: llama-3-3-70b"]
+            subgraph "AI Models - InferenceServices"
+                LLM["🦙 Llama 3.3 70B INT8<br/>vLLM (4x L40 GPUs)<br/>Context: 20K tokens<br/>Tensor Parallel<br/>Namespace: llama-3-3-70b"]
+                EMB["🔢 Gemma 300m<br/>Embeddings (768-dim)<br/>HuggingFace Runtime<br/>Namespace: edg-demo"]
             end
 
             subgraph "TrustyAI Guardrails"
@@ -94,6 +95,7 @@ graph TB
 
     %% LlamaStack to Models
     LS -->|Inference| LLM
+    LS -->|Embeddings API| EMB
     LS -->|MCP Protocol SSE| OCR
     LS -->|MCP Protocol SSE| RAG
     LS -.->|Optional Safety| LG
@@ -105,8 +107,10 @@ graph TB
 
     %% MCP Servers to AI Models
     OCR -->|LLM Validation| LLM
+    RAG -->|Embeddings via LS API| EMB
 
     %% Note: EasyOCR runs embedded in OCR server (no external model call)
+    %% Note: RAG server calls LlamaStack Embeddings API which uses Gemma 300m
 
     %% MCP Servers to Data
     RAG -->|Custom Vector Search| DB
@@ -120,6 +124,7 @@ graph TB
     style B fill:#ffe6f0
     style LS fill:#f3e5f5
     style LLM fill:#e8f5e9
+    style EMB fill:#e1f5e1
     style LG fill:#fff9c4
     style GG fill:#fff9c4
     style OCR fill:#e3f2fd
@@ -135,6 +140,7 @@ graph TB
 - **AI Orchestration**: LlamaStack with ReActAgent (Reasoning + Acting)
 - **AI Models**:
   - **Primary LLM**: Llama 3.3 70B INT8 (vLLM inference, 4 GPUs tensor parallel, 20K context)
+  - **Embeddings Model**: Gemma 300m (HuggingFace runtime, 768-dim vectors for RAG)
   - **OCR Engine**: EasyOCR (embedded library, fast text extraction)
   - **Guardrails**:
     - Llama Guard 3 1B (content safety detection)
@@ -280,12 +286,21 @@ Both OCR and RAG servers implement the **Model Context Protocol (MCP)** using JS
 
 ### OpenShift Resources
 
-The deployment uses OpenShift AI Custom Resource Definitions (CRDs):
+The deployment uses standard Kubernetes resources (Deployments, Services, ConfigMaps, Routes):
 
-- **LlamaStackDistribution**: Manages LlamaStack server deployment
-- **MCPServer**: Deploys custom MCP servers (OCR, RAG)
-- **Guardrails**: Configures safety and validation rules
-- **InferenceService**: Manages vLLM model serving
+- **LlamaStack v0.3.5**: Manual Deployment (recommended for MCP tools support)
+- **MCP Servers**: Standard Deployments for OCR and RAG servers
+- **PostgreSQL**: StatefulSet with PVC for persistent storage
+- **InferenceService**: KServe-managed vLLM model serving (via OpenShift AI)
+
+**Optional OpenShift AI CRDs** (in `openshift/deployments/`):
+- **DataScienceProject**: Creates a data science project namespace with resource quotas
+- **LlamaStackDistribution**: Deploys LlamaStack with vector store (Milvus/FAISS) via operator
+  - ⚠️ **Technology Preview** in OpenShift AI 3.0 (not supported for production)
+  - ⚠️ Supports Milvus/FAISS vector stores (not PostgreSQL/pgvector)
+  - We use manual deployment for full control and PostgreSQL/pgvector support
+
+See: [Working with Llama Stack - OpenShift AI 3.0](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/)
 
 ### Step-by-Step Deployment Guide
 
@@ -683,13 +698,13 @@ Deployment instructions preserved for reference: [`openshift/qwen-vl-7b/README.m
 **7.1 Deploy OCR Server**
 ```bash
 oc apply -f openshift/deployments/ocr-server-deployment.yaml
-oc apply -f openshift/services/ocr-service.yaml
+oc apply -f openshift/services/ocr-server-service.yaml
 ```
 
 **7.2 Deploy RAG Server**
 ```bash
 oc apply -f openshift/deployments/rag-server-deployment.yaml
-oc apply -f openshift/services/rag-service.yaml
+oc apply -f openshift/services/rag-server-service.yaml
 ```
 
 **7.3 Verify MCP Servers**
@@ -724,19 +739,21 @@ BACKEND_URL=$(oc get route backend -o jsonpath='{.spec.host}')
 curl http://$BACKEND_URL/health
 ```
 
-#### Step 9: Deploy Frontend
+#### Step 9: Deploy Frontend (Optional)
 
-**9.1 Deploy Frontend**
+**Note**: The frontend is primarily deployed via Helm chart. For manual deployment, you'll need to create service and route manifests.
+
+**9.1 Deploy Frontend (if deploying manually)**
 ```bash
 oc apply -f openshift/deployments/frontend-deployment.yaml
-oc apply -f openshift/services/frontend-service.yaml
-oc apply -f openshift/routes/frontend-route.yaml
+# Note: Service and Route manifests are in the Helm chart
+# See: helm/agentic-claims-demo/templates/frontend/
 ```
 
-**9.2 Get Frontend URL**
+**9.2 Get Frontend URL (if using Helm)**
 ```bash
-FRONTEND_URL=$(oc get route frontend -o jsonpath='{.spec.host}')
-echo "Access the application at: http://$FRONTEND_URL"
+FRONTEND_URL=$(oc get route frontend -n claims-demo -o jsonpath='{.spec.host}')
+echo "Access the application at: https://$FRONTEND_URL"
 ```
 
 #### Step 10: Test End-to-End Workflow
@@ -833,13 +850,18 @@ done
 
 Key configuration is externalized via ConfigMaps:
 
-- **Backend Config**: `backend/openshift/configmaps/backend-config.yaml`
+- **Backend Config**: `openshift/configmaps/backend-config.yaml`
   - API settings, database connections, LlamaStack endpoints
 
-- **LlamaStack Config**: `backend/openshift/configmaps/llama-stack-config.yaml`
-  - Model configurations, tool groups, MCP server endpoints
+- **LlamaStack Config v0.3.5**: `openshift/llamastack-v0.3.5/llama-stack-config.yaml`
+  - Model configurations (Llama 3.3 70B + Gemma 300m), tool groups, MCP server endpoints
+  - PostgreSQL storage backend
 
-- **Prompts**: `backend/openshift/configmaps/backend-prompts.yaml`
+- **LlamaStack Config v0.3.0** (Reference): `openshift/configmaps/llamastack-config.yaml`
+  - Configuration for OpenShift AI shipped LlamaStack (Llama 3.2 3B + Mistral 14B)
+  - SQLite storage backend
+
+- **Prompts**: `openshift/configmaps/prompts-config.yaml`
   - Agent instructions and system prompts
 
 ## API Endpoints
@@ -917,24 +939,30 @@ agentic-claim-demo/
 │   │   ├── models/           # SQLAlchemy models
 │   │   │   └── claim.py      # Claim data models
 │   │   └── llamastack/       # LlamaStack integration
-│   │       ├── client.py     # LlamaStack client
 │   │       └── prompts.py    # Agent prompts
-│   ├── mcp_servers/          # Custom MCP servers
-│   │   ├── ocr_server/
-│   │   └── rag_server/
-│   └── openshift/            # OpenShift manifests
-│       ├── configmaps/
-│       ├── deployments/
-│       └── services/
+│   └── mcp_servers/          # Custom MCP servers
+│       ├── ocr_server/
+│       └── rag_server/
 ├── frontend/
-│   ├── src/
-│   │   ├── components/       # React components
-│   │   ├── pages/            # Page components
-│   │   └── services/         # API clients
-│   └── openshift/
-└── database/
-    ├── init.sql              # Database schema
-    └── migrations/           # Database migrations
+│   └── src/
+│       ├── components/       # React components
+│       ├── pages/            # Page components
+│       └── services/         # API clients
+├── openshift/                # OpenShift deployment manifests
+│   ├── configmaps/           # Configuration (backend, prompts, llamastack v0.3.0)
+│   ├── deployments/          # Deployments and CRDs
+│   ├── services/             # Service definitions
+│   ├── routes/               # OpenShift routes
+│   ├── pvcs/                 # Persistent volume claims
+│   ├── guardrails/           # TrustyAI guardrails
+│   └── llamastack-v0.3.5/    # LlamaStack v0.3.5 custom deployment
+├── helm/                     # Helm chart for automated deployment
+│   └── agentic-claims-demo/
+├── database/
+│   ├── init.sql              # Database schema
+│   ├── seed_data/            # Sample data
+│   └── migrations/           # Database migrations
+└── scripts/                  # Deployment and testing scripts
 ```
 
 ## Technology Stack Details
