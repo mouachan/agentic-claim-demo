@@ -2,27 +2,22 @@
 
 An intelligent insurance claims processing system powered by AI agents, demonstrating advanced document processing, policy retrieval, and automated decision-making capabilities using Model Context Protocol (MCP) and LlamaStack.
 
-## ⚠️ IMPORTANT: LlamaStack Version Requirement
+## Key URLs
 
-**This demo uses LlamaStack v0.3.5+rhai0 as a temporary solution until the next OpenShift AI release.**
-
-**Key URLs** (deployed version):
+**Deployed Application** (OpenShift cluster):
 - Frontend: https://frontend-claims-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>
 - Backend API: https://backend-claims-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>/api/v1/claims/
-- **LlamaStack v0.3.5**: https://llamastack-test-v035-claims-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>
 
-### LlamaStack Version Roadmap
+## Model Configuration
 
-- **Current (Required)**: v0.3.5+rhai0 - Custom deployment (see deployment steps below)
-- **Future**: OpenShift AI 3.0 native LlamaStack - When Red Hat updates to v0.3.5+
+The system uses the following AI models from OpenShift AI:
 
-## Embedding Model Configuration
-
-The system now uses **Gemma-300m** (768-dim) for generating embeddings instead of Granite-125m:
-
-- **Endpoint**: `https://embeddinggemma-300m-edg-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>`
-- **Vector Store**: LlamaStack with pgvector backend
-- **Configured in**: `openshift/llamastack-v0.3.5/llama-stack-config.yaml` (active deployment)
+- **Primary LLM**: Llama 3.3 70B INT8 (vLLM, 20K context, 4 GPUs tensor parallel)
+  - Endpoint: `https://llama-3-3-70b-llama-3-3-70b.apps.<OPENSHIFT_CLUSTER_DOMAIN>/v1`
+- **Embeddings**: Gemma 300M (768-dim vectors)
+  - Endpoint: `https://embeddinggemma-300m-edg-demo.apps.<OPENSHIFT_CLUSTER_DOMAIN>/v1`
+- **Vector Store**: PostgreSQL with pgvector backend
+- **Configured in**: `openshift/configmaps/llamastack-config.yaml`
 
 ### RAG Architecture Clarification: Builtin vs Custom
 
@@ -58,15 +53,14 @@ graph TB
             B[⚙️ Backend API<br/>FastAPI + ReActAgent<br/>Route/Service]
         end
 
-        subgraph "LlamaStack v0.3.5 - Manual Deployment"
-            LS[🧠 LlamaStack v0.3.5+rhai0<br/>ReActAgent Runtime<br/>Service: llamastack-test-v035:8321<br/>⚠️ MCP Tools Working!]
-        end
-
         subgraph "OpenShift AI 3.0 - AI Services"
+            subgraph "LlamaStack - Operator Managed"
+                LS[🧠 LlamaStack<br/>ReActAgent Runtime<br/>Service: claims-llamastack-service:8321<br/>Deployed via LlamaStackDistribution CRD]
+            end
 
             subgraph "AI Models - InferenceServices"
                 LLM["🦙 Llama 3.3 70B INT8<br/>vLLM (4x L40 GPUs)<br/>Context: 20K tokens<br/>Tensor Parallel<br/>Namespace: llama-3-3-70b"]
-                EMB["🔢 Gemma 300m<br/>Embeddings (768-dim)<br/>HuggingFace Runtime<br/>Namespace: edg-demo"]
+                EMB["🔢 Gemma 300M<br/>Embeddings (768-dim)<br/>HuggingFace Runtime<br/>Namespace: edg-demo"]
             end
 
             subgraph "TrustyAI Guardrails"
@@ -137,10 +131,10 @@ graph TB
 
 - **Frontend**: React with TypeScript
 - **Backend**: Python FastAPI
-- **AI Orchestration**: LlamaStack with ReActAgent (Reasoning + Acting)
-- **AI Models**:
+- **AI Orchestration**: LlamaStack (deployed via OpenShift AI operator) with ReActAgent (Reasoning + Acting)
+- **AI Models** (from OpenShift AI):
   - **Primary LLM**: Llama 3.3 70B INT8 (vLLM inference, 4 GPUs tensor parallel, 20K context)
-  - **Embeddings Model**: Gemma 300m (HuggingFace runtime, 768-dim vectors for RAG)
+  - **Embeddings Model**: Gemma 300M (HuggingFace runtime, 768-dim vectors for RAG)
   - **OCR Engine**: EasyOCR (embedded library, fast text extraction)
   - **Guardrails**:
     - Llama Guard 3 1B (content safety detection)
@@ -286,19 +280,19 @@ Both OCR and RAG servers implement the **Model Context Protocol (MCP)** using JS
 
 ### OpenShift Resources
 
-The deployment uses standard Kubernetes resources (Deployments, Services, ConfigMaps, Routes):
+The deployment uses OpenShift AI native resources and standard Kubernetes components:
 
-- **LlamaStack v0.3.5**: Manual Deployment (recommended for MCP tools support)
+- **LlamaStack**: Deployed via **LlamaStackDistribution CRD** (managed by OpenShift AI operator)
+  - Automatically creates Deployment, Service, and ConfigMap mounts
+  - Service: `claims-llamastack-service` (port 8321)
+  - ConfigMap: `llama-stack-config` (contains run.yaml configuration)
 - **MCP Servers**: Standard Deployments for OCR and RAG servers
-- **PostgreSQL**: StatefulSet with PVC for persistent storage
-- **InferenceService**: KServe-managed vLLM model serving (via OpenShift AI)
+- **PostgreSQL**: StatefulSet with PVC for persistent storage and pgvector extension
+- **InferenceService**: KServe-managed vLLM model serving for Llama 3.3 70B and Gemma 300M
 
-**Optional OpenShift AI CRDs** (in `openshift/deployments/`):
+**OpenShift AI CRDs** (in `openshift/deployments/`):
 - **DataScienceProject**: Creates a data science project namespace with resource quotas
-- **LlamaStackDistribution**: Deploys LlamaStack with vector store (Milvus/FAISS) via operator
-  - ⚠️ **Technology Preview** in OpenShift AI 3.0 (not supported for production)
-  - ⚠️ Supports Milvus/FAISS vector stores (not PostgreSQL/pgvector)
-  - We use manual deployment for full control and PostgreSQL/pgvector support
+- **LlamaStackDistribution**: Deploys LlamaStack via operator with pgvector backend
 
 See: [Working with Llama Stack - OpenShift AI 3.0](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/)
 
@@ -430,211 +424,78 @@ oc get pods -l app=guardrails
 oc logs -l app=guardrails-orchestrator --tail=20
 ```
 
-#### Step 5: LlamaStack v0.3.5 Deployment
+#### Step 5: Deploy LlamaStack via OpenShift AI
 
-⚠️ **CRITICAL**: You MUST use LlamaStack v0.3.5+rhai0 or later. Earlier versions have broken MCP tool execution.
-
-**Why NOT use OpenShift AI 3.0 native LlamaStack?**
-- OpenShift AI 3.0 currently ships with LlamaStack v0.3.0-v0.3.4
-- These versions have critical bugs with MCP tool calls
-- We deploy LlamaStack v0.3.5+rhai0 **manually** until OpenShift AI updates
+LlamaStack is deployed using OpenShift AI's **LlamaStackDistribution** CRD, which is managed by the OpenShift AI operator.
 
 **5.1 Create LlamaStack Configuration ConfigMap**
 
-Create a ConfigMap with the LlamaStack v0.3.5 configuration including MCP tools:
+Create the ConfigMap containing LlamaStack's run.yaml configuration:
 
 ```bash
-# Apply the ConfigMap with MCP tools configuration
-oc apply -f openshift/llamastack-v0.3.5/llama-stack-config.yaml -n claims-demo
+# Apply the ConfigMap with model and MCP tools configuration
+oc apply -f openshift/configmaps/llamastack-config.yaml -n claims-demo
 ```
 
-**Configuration Contents** (`llama-stack-config.yaml`):
+The ConfigMap includes:
+- **Model Configurations**: Llama 3.3 70B INT8 (20K context) and Gemma 300M embeddings
+- **Vector Store**: PostgreSQL with pgvector backend
+- **MCP Tool Groups**: OCR server and RAG server endpoints
+- **Agent Runtime**: Meta-reference implementation for ReActAgent
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: llama-stack-config-v035
-  namespace: claims-demo
-data:
-  run.yaml: |
-    version: "2"
+**5.2 Deploy LlamaStackDistribution CRD**
 
-    # Built-in providers (inline)
-    built_in_providers:
-      - remote::ollama           # For local Ollama models
-      - inline::meta-reference   # Meta reference agents
-      - remote::fireworks        # Fireworks AI
-      - remote::together         # Together AI
-      - inline::pgvector         # Vector DB (pgvector)
-      - inline::rag-runtime      # Builtin RAG
-      - remote::model-context-protocol  # MCP provider
-
-    # Model providers
-    models:
-      - provider_id: vllm-inference-1
-        provider_type: remote::vllm
-        config:
-          url: "https://llama-3-3-70b-llama-3-3-70b.apps.CLUSTER_DOMAIN/v1"
-
-    # MCP Tool Groups (CRITICAL for v0.3.5)
-    toolgroups:
-      - toolgroup_id: mcp::ocr-server
-        provider_id: model-context-protocol
-        provider_type: remote::model-context-protocol
-        mcp_endpoint:
-          uri: "http://ocr-server.claims-demo.svc.cluster.local:8080/sse"
-
-      - toolgroup_id: mcp::rag-server
-        provider_id: model-context-protocol
-        provider_type: remote::model-context-protocol
-        mcp_endpoint:
-          uri: "http://rag-server.claims-demo.svc.cluster.local:8080/sse"
-
-    # Agents runtime
-    agents:
-      - provider_id: meta-reference
-        provider_type: inline::meta-reference
-        config: {}
-
-    # Vector DB for RAG
-    memory_banks:
-      - provider_id: pgvector
-        provider_type: inline::pgvector
-        config:
-          host: "postgresql.claims-demo.svc.cluster.local"
-          port: 5432
-          db: "claims_db"
-          user: "claims_user"
-          password: "${POSTGRES_PASSWORD}"
-```
-
-**5.2 Create LlamaStack Deployment (v0.3.5)**
-
-Create a Deployment manifest for LlamaStack v0.3.5:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: llamastack-test-v035
-  namespace: claims-demo
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: llamastack-v035
-  template:
-    metadata:
-      labels:
-        app: llamastack-v035
-    spec:
-      containers:
-      - name: llama-stack
-        image: docker.io/llamastack/distribution-rh-dev:0.3.5+rhai0
-        ports:
-        - containerPort: 8321
-          name: http
-        env:
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgresql-secret
-              key: POSTGRES_PASSWORD
-        volumeMounts:
-        - name: config
-          mountPath: /app/run.yaml
-          subPath: run.yaml
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8321
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8321
-          initialDelaySeconds: 10
-          periodSeconds: 5
-      volumes:
-      - name: config
-        configMap:
-          name: llama-stack-config-v035
-```
-
-Deploy LlamaStack v0.3.5:
+Deploy LlamaStack using the operator-managed custom resource:
 
 ```bash
-# Apply the deployment
-oc apply -f openshift/llamastack-v0.3.5/deployment.yaml -n claims-demo
-
-# Create the service
-oc apply -f openshift/llamastack-v0.3.5/service.yaml -n claims-demo
-
-# Create the route
-oc apply -f openshift/llamastack-v0.3.5/route.yaml -n claims-demo
+# Deploy LlamaStack via operator
+oc apply -f openshift/deployments/llamastack-distribution.yaml -n claims-demo
 ```
+
+The operator automatically:
+- Creates a Deployment for the LlamaStack server
+- Creates a Service named `claims-llamastack-service` (port 8321)
+- Mounts the `llama-stack-config` ConfigMap to `/etc/llama-stack/run.yaml`
+- Manages pod lifecycle and health checks
 
 **5.3 Wait for LlamaStack to be Ready**
 
 ```bash
-# Wait for the pod to be ready
-oc wait --for=condition=ready pod -l app=llamastack-v035 -n claims-demo --timeout=300s
+# Wait for the pod to be ready (managed by operator)
+oc wait --for=condition=ready pod -l app=llama-stack -n claims-demo --timeout=300s
 
 # Check the logs
-oc logs -l app=llamastack-v035 -n claims-demo --tail=50
+oc logs -l app=llama-stack -n claims-demo --tail=50
 
 # Verify the service
-oc get svc llamastack-test-v035 -n claims-demo
+oc get svc claims-llamastack-service -n claims-demo
 ```
 
-**5.4 Verify MCP Tools Registration (v0.3.5 API)**
-
-Verify that MCP servers are properly registered using the new v0.3.5 toolgroups API:
+**5.4 Verify LlamaStack Configuration**
 
 ```bash
-# Get the LlamaStack route
-LLAMASTACK_URL=$(oc get route llamastack-test-v035 -n claims-demo -o jsonpath='{.spec.host}')
+# Check that models are registered
+oc exec -it $(oc get pod -l app=llama-stack -o name | head -n1) -n claims-demo -- \
+  curl -s localhost:8321/v1/models | jq '.data[] | {model_id, model_type}'
 
+# Expected output:
+# {"model_id": "llama-3-3-70b", "model_type": "llm"}
+# {"model_id": "gemma-300m", "model_type": "embedding"}
+```
+
+**5.5 Verify MCP Tools Registration**
+
+Verify that MCP servers are properly registered:
+
+```bash
 # List registered tool groups
-curl -s "https://${LLAMASTACK_URL}/v1/toolgroups" | jq .
-```
+oc exec -it $(oc get pod -l app=llama-stack -o name | head -n1) -n claims-demo -- \
+  curl -s localhost:8321/v1/tool_groups | jq '.data[] | {toolgroup_id, provider_id}'
 
-Expected output:
-```json
-{
-  "toolgroups": [
-    {
-      "identifier": "mcp::ocr-server",
-      "provider_resource_id": "model-context-protocol",
-      "type": "mcp"
-    },
-    {
-      "identifier": "mcp::rag-server",
-      "provider_resource_id": "model-context-protocol",
-      "type": "mcp"
-    }
-  ]
-}
-```
-
-**5.5 Test MCP Tool Execution**
-
-Test that MCP tools can be called successfully:
-
-```bash
-# Create a test agent
-curl -X POST "https://${LLAMASTACK_URL}/v1/agents" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "test-agent",
-    "model": "vllm-inference-1/llama-3-3-70b",
-    "instructions": "You are a helpful assistant.",
-    "toolgroups": ["mcp::ocr-server", "mcp::rag-server"]
-  }'
-
-# The agent should be created successfully with MCP tools registered
+# Expected output:
+# {"toolgroup_id": "builtin::rag", "provider_id": "rag-runtime"}
+# {"toolgroup_id": "mcp::ocr-server", "provider_id": "model-context-protocol"}
+# {"toolgroup_id": "mcp::rag-server", "provider_id": "model-context-protocol"}
 ```
 
 **5.6 Updating LlamaStack Configuration**
@@ -643,22 +504,21 @@ To update the LlamaStack configuration:
 
 ```bash
 # 1. Update the ConfigMap
-oc edit configmap llama-stack-config-v035 -n claims-demo
+oc edit configmap llama-stack-config -n claims-demo
 
-# 2. Restart LlamaStack pod to reload configuration
-oc delete pod -l app=llamastack-v035 -n claims-demo
+# 2. Delete the LlamaStack pod (operator will recreate it with new config)
+oc delete pod -l app=llama-stack -n claims-demo
 
 # 3. Wait for new pod to be ready
-oc wait --for=condition=ready pod -l app=llamastack-v035 -n claims-demo --timeout=300s
+oc wait --for=condition=ready pod -l app=llama-stack -n claims-demo --timeout=300s
 
 # 4. Verify the new configuration
-oc logs -l app=llamastack-v035 -n claims-demo --tail=50
+oc logs -l app=llama-stack -n claims-demo --tail=50
 ```
 
 📚 **Documentation**:
-- [LlamaStack v0.3.5 Release Notes](https://github.com/meta-llama/llama-stack/releases/tag/v0.3.5)
-- [LlamaStack MCP Provider Documentation](https://github.com/meta-llama/llama-stack/blob/main/docs/source/distributions/remote_mcp.md)
-- [Future: OpenShift AI 3.0 - Working with Llama Stack](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/) (when updated to v0.3.5+)
+- [OpenShift AI 3.0 - Working with Llama Stack](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/)
+- [LlamaStack GitHub Repository](https://github.com/meta-llama/llama-stack)
 
 #### Step 6: OCR Configuration - EasyOCR (Default)
 
@@ -853,13 +713,13 @@ Key configuration is externalized via ConfigMaps:
 - **Backend Config**: `openshift/configmaps/backend-config.yaml`
   - API settings, database connections, LlamaStack endpoints
 
-- **LlamaStack Config v0.3.5**: `openshift/llamastack-v0.3.5/llama-stack-config.yaml`
-  - Model configurations (Llama 3.3 70B + Gemma 300m), tool groups, MCP server endpoints
-  - PostgreSQL storage backend
-
-- **LlamaStack Config v0.3.0** (Reference): `openshift/configmaps/llamastack-config.yaml`
-  - Configuration for OpenShift AI shipped LlamaStack (Llama 3.2 3B + Mistral 14B)
-  - SQLite storage backend
+- **LlamaStack Config**: `openshift/configmaps/llamastack-config.yaml`
+  - **Model Configurations**:
+    - Llama 3.3 70B INT8 (20K context, 4 GPUs tensor parallel)
+    - Gemma 300M embeddings (768-dim)
+  - **Vector Store**: PostgreSQL with pgvector backend
+  - **MCP Tool Groups**: OCR server and RAG server endpoints
+  - **Agent Runtime**: Meta-reference ReActAgent implementation
 
 - **Prompts**: `openshift/configmaps/prompts-config.yaml`
   - Agent instructions and system prompts
@@ -915,9 +775,9 @@ POSTGRES_DB=claims_db
 POSTGRES_USER=claims_user
 POSTGRES_PASSWORD=your_password
 
-# LlamaStack
-LLAMASTACK_ENDPOINT=http://localhost:8321
-LLAMASTACK_DEFAULT_MODEL=vllm-inference-1/llama-3-3-70b
+# LlamaStack (OpenShift AI managed)
+LLAMASTACK_ENDPOINT=http://claims-llamastack-service:8321
+LLAMASTACK_DEFAULT_MODEL=llama-3-3-70b
 
 # MCP Servers
 OCR_SERVER_URL=http://localhost:8080
@@ -949,13 +809,12 @@ agentic-claim-demo/
 │       ├── pages/            # Page components
 │       └── services/         # API clients
 ├── openshift/                # OpenShift deployment manifests
-│   ├── configmaps/           # Configuration (backend, prompts, llamastack v0.3.0)
-│   ├── deployments/          # Deployments and CRDs
+│   ├── configmaps/           # Configuration (backend, prompts, llamastack)
+│   ├── deployments/          # Deployments and CRDs (including LlamaStackDistribution)
 │   ├── services/             # Service definitions
 │   ├── routes/               # OpenShift routes
 │   ├── pvcs/                 # Persistent volume claims
-│   ├── guardrails/           # TrustyAI guardrails
-│   └── llamastack-v0.3.5/    # LlamaStack v0.3.5 custom deployment
+│   └── guardrails/           # TrustyAI guardrails
 ├── helm/                     # Helm chart for automated deployment
 │   └── agentic-claims-demo/
 ├── database/
