@@ -373,6 +373,77 @@ oc exec postgresql-0 -- psql -U claims_user -d claims_db -c "SELECT COUNT(*) FRO
 oc exec postgresql-0 -- psql -U claims_user -d claims_db -c "SELECT COUNT(*) FROM claims;"
 ```
 
+**2.6 Setup Claim Documents PVC and Copy Test PDFs**
+
+The OCR and Backend pods need access to claim documents (PDFs) stored in a shared PersistentVolumeClaim. You need to:
+1. Create the PVC
+2. Copy test PDF documents into it
+
+**Create the PVC:**
+```bash
+oc apply -f openshift/pvcs/claim-documents-pvc.yaml -n claims-demo
+```
+
+**Approach 1: Using OpenShift Job (Recommended)**
+
+This approach uses a Kubernetes Job that automatically downloads test PDFs from GitHub and copies them to the PVC.
+
+```bash
+# Deploy the job to copy test documents
+oc apply -f openshift/jobs/copy-test-documents-job.yaml -n claims-demo
+
+# Wait for job to complete
+oc wait --for=condition=complete job/copy-test-documents -n claims-demo --timeout=120s
+
+# Check job logs
+oc logs job/copy-test-documents -n claims-demo
+
+# Verify files were copied
+oc run verify-docs --image=registry.access.redhat.com/ubi9/ubi-minimal:latest --restart=Never \
+  --overrides='{"spec":{"volumes":[{"name":"docs","persistentVolumeClaim":{"claimName":"claim-documents"}}],"containers":[{"name":"verify","image":"registry.access.redhat.com/ubi9/ubi-minimal:latest","command":["ls","-lh","/claim_documents/"],"volumeMounts":[{"name":"docs","mountPath":"/claim_documents"}]}]}}' \
+  -n claims-demo
+
+# Clean up verification pod
+oc delete pod verify-docs -n claims-demo
+
+# Clean up job (optional - keeps for audit trail)
+# oc delete job copy-test-documents -n claims-demo
+```
+
+**What the Job does:**
+- Downloads 5 test PDF files directly from GitHub repository
+- Copies them to `/claim_documents/` in the PVC
+- These PDFs are used by the demo claims created in Step 11
+
+**Approach 2: Using Local Script with `oc rsync` (Alternative)**
+
+If you prefer to copy documents from your local machine or have custom PDFs:
+
+```bash
+# Step 1: Generate test PDFs locally (if needed)
+cd backend/scripts
+python generate_claim_pdfs.py
+# This creates PDFs in /tmp/claim_documents/
+
+# Step 2: Upload to OpenShift PVC
+./upload_pdfs_to_openshift.sh
+```
+
+**What the script does:**
+1. Creates a temporary pod that mounts the `claim-documents` PVC
+2. Uses `oc rsync` to copy PDFs from `/tmp/claim_documents/` (local) to the PVC
+3. Verifies the upload
+4. Cleans up the temporary pod
+
+**Note**: The test PDFs in this demo are:
+- `claim_auto_001.pdf` - T-bone collision claim
+- `claim_auto_002.pdf` - Multi-vehicle pileup
+- `claim_auto_019.pdf` - Parking lot collision
+- `claim_medical_002.pdf` - Medical claim
+- `claim_medical_012.pdf` - Medical claim
+
+These documents are referenced in the demo claims created by `scripts/reset_and_create_claims.sh`.
+
 #### Step 3: Deploy vLLM Inference Model
 
 **3.1 Deploy Llama 3.3 70B INT8 with vLLM (4 GPUs tensor parallel, 20K context)**

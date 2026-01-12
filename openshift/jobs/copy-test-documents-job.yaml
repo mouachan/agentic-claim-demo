@@ -1,0 +1,82 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: copy-test-documents
+  namespace: claims-demo
+  labels:
+    app: claims-demo
+    component: data-seeder
+spec:
+  template:
+    spec:
+      containers:
+      - name: copy-documents
+        image: registry.access.redhat.com/ubi9/python-311:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+
+          echo "============================================"
+          echo "Copying test claim documents to PVC"
+          echo "============================================"
+
+          # GitHub repository details
+          REPO="mouachan/agentic-claim-demo"
+          BRANCH="main"
+          PDF_DIR="backend/test_data/claim_documents"
+
+          # Target directory in PVC
+          TARGET_DIR="/claim_documents"
+
+          # Create target directory
+          mkdir -p $TARGET_DIR
+
+          # List of PDF files to download
+          PDF_FILES=(
+            "claim_auto_001.pdf"
+            "claim_auto_002.pdf"
+            "claim_auto_019.pdf"
+            "claim_medical_002.pdf"
+            "claim_medical_012.pdf"
+          )
+
+          echo ""
+          echo "Downloading ${#PDF_FILES[@]} PDF files from GitHub..."
+          echo ""
+
+          # Download each PDF file
+          for PDF_FILE in "${PDF_FILES[@]}"; do
+            URL="https://raw.githubusercontent.com/$REPO/$BRANCH/$PDF_DIR/$PDF_FILE"
+            echo "Downloading: $PDF_FILE"
+            curl -L -s -f -o "$TARGET_DIR/$PDF_FILE" "$URL"
+
+            if [ $? -eq 0 ]; then
+              FILE_SIZE=$(stat -c%s "$TARGET_DIR/$PDF_FILE" 2>/dev/null || stat -f%z "$TARGET_DIR/$PDF_FILE")
+              echo "  ✓ Downloaded successfully ($FILE_SIZE bytes)"
+            else
+              echo "  ✗ Failed to download"
+              exit 1
+            fi
+          done
+
+          echo ""
+          echo "============================================"
+          echo "Verifying files in PVC..."
+          echo "============================================"
+          ls -lh $TARGET_DIR/*.pdf
+
+          echo ""
+          echo "============================================"
+          echo "✓ Successfully copied ${#PDF_FILES[@]} test documents"
+          echo "============================================"
+        volumeMounts:
+        - name: claim-documents
+          mountPath: /claim_documents
+      volumes:
+      - name: claim-documents
+        persistentVolumeClaim:
+          claimName: claim-documents
+      restartPolicy: Never
+  backoffLimit: 3
