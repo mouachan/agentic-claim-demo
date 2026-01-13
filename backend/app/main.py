@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"🚀 Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"📊 Environment: {settings.environment}")
     logger.info(f"🔗 LlamaStack endpoint: {settings.llamastack_endpoint}")
-    logger.info(f"🗄️  Database: {settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}")
+    logger.info(f"🗄️  Database: {settings.postgres_host}:{settings.postgres_port}/{settings.postgres_database}")
     
     # Check database connection on startup
     if not await check_database_connection():

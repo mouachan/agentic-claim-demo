@@ -1,0 +1,70 @@
+{{- if .Values.postgresql.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    {{- include "agentic-claims-demo.labels" . | nindent 4 }}
+  name: init-postgres
+  namespace: {{ include "agentic-claims-demo.namespace" . }}
+data:
+  init-pg.sh: |
+    #!/bin/bash
+
+    POSTGRESQL_ADMIN_PASSWORD="$(cat /cluster-secrets/POSTGRES_ADMIN_PASSWORD)"
+    POSTGRESQL_DATABASE="$(cat /cluster-secrets/{{ .Values.postgresql.auth.secretKeys.databaseKey }})"
+    # installing vector extension requires admin privileges
+    POSTGRESQL_USER=postgres
+    POSTGRESQL_OWNER="$(cat /cluster-secrets/{{ .Values.postgresql.auth.secretKeys.userNameKey }})"
+
+    if test -z "$POSTGRESQL_DATABASE" \
+         -o -z "$POSTGRESQL_ADMIN_PASSWORD" \
+         -o -z "$POSTGRESQL_OWNER" \
+         -o -z "$POSTGRESQL_USER"; then
+        echo ERROR: missing postgres coordinates
+        exit 1
+    fi
+
+    echo Waiting for postgres ...
+    while :
+    do
+        PGPASSWORD="$POSTGRESQL_ADMIN_PASSWORD" psql -U "$POSTGRESQL_USER" \
+            --host postgresql "$POSTGRESQL_DATABASE" -c "\\l" && break
+        sleep 5
+    done
+
+    echo Checking for database ...
+    if ! PGPASSWORD="$POSTGRESQL_ADMIN_PASSWORD" psql -U "$POSTGRESQL_USER" \
+            --host postgresql "$POSTGRESQL_DATABASE" -c "\\d" 2>&1 \
+            | grep "Did not find any relations" >/dev/null; then
+        echo " => Database already includes tables, we're done"
+        exit 0
+    fi
+
+    echo Initializing database ...
+    PGPASSWORD="$POSTGRESQL_ADMIN_PASSWORD" psql -U "$POSTGRESQL_USER" \
+        --host postgresql "$POSTGRESQL_DATABASE" -f /scripts/init.sql
+    echo " => Done"
+
+    echo Injecting seed data ...
+    PGPASSWORD="$POSTGRESQL_ADMIN_PASSWORD" psql -U "$POSTGRESQL_USER" \
+        --host postgresql "$POSTGRESQL_DATABASE" -f /scripts/seed.sql
+    echo " => Done"
+
+    echo Fix Ownership ...
+    PGPASSWORD="$POSTGRESQL_ADMIN_PASSWORD" psql -U "$POSTGRESQL_USER" \
+        --host postgresql "$POSTGRESQL_DATABASE" -qAt -c \
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'public'" \
+        | while read -r tableName
+        do
+            PGPASSWORD="$POSTGRESQL_ADMIN_PASSWORD" psql -U "$POSTGRESQL_USER" \
+                --host postgresql "$POSTGRESQL_DATABASE" -c \
+                "ALTER TABLE \"$tableName\" OWNER TO $POSTGRESQL_OWNER"
+        done
+    echo " => Done"
+
+    exit 0
+{{ (.Files.Glob "files/cm.init-postgres/*").AsConfig | indent 2 }}
+{{- end }}

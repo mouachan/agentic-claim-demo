@@ -7,13 +7,45 @@
 
 🔗 Access URLs:
 {{- if .Values.frontend.enabled }}
-  Frontend:  https://frontend-{{ .Values.global.namespace }}.{{ .Values.global.clusterDomain }}
+  {{- if .Values.frontend.route.enabled }}
+    {{- if .Values.frontend.route.host }}
+      {{- if .Values.frontend.route.tls.enabled }}
+  Frontend:   https://{{ .Values.frontend.route.host }}
+      {{- else }}
+  Frontend:   http://{{ .Values.frontend.route.host }}
+      {{- end }}
+    {{- else }}
+      {{- if .Values.frontend.route.tls.enabled }}
+  Frontend:   https://{{ include "frontend_route_prefix" . }}.{{ .Values.global.clusterDomain }}
+      {{- else }}
+  Frontend:   http://{{ include "frontend_route_prefix" . }}.{{ .Values.global.clusterDomain }}
+      {{- end }}
+    {{- end }}
+  {{- else }}
+  Frontend:   http://frontend.{{ .Values.global.clusterDomain }}.svc.cluster.local:8080
+  {{- end }}
 {{- end }}
 {{- if .Values.backend.enabled }}
-  Backend:   https://backend-{{ .Values.global.namespace }}.{{ .Values.global.clusterDomain }}/api/v1/claims
+  {{- if .Values.backend.route.enabled }}
+    {{- if .Values.backend.route.host }}
+      {{- if .Values.backend.route.tls.enabled }}
+  Backend:    https://{{ .Values.backend.route.host }}/api/v1/claims
+      {{- else }}
+  Backend:    http://{{ .Values.backend.route.host }}/api/v1/claims
+      {{- end }}
+    {{- else }}
+      {{- if .Values.backend.route.tls.enabled }}
+  Backend:    https://{{ include "backend_route_prefix" . }}.{{ .Values.global.clusterDomain }}/api/v1/claims
+      {{- else }}
+  Backend:    http://{{ include "backend_route_prefix" . }}.{{ .Values.global.clusterDomain }}/api/v1/claims
+      {{- end }}
+    {{- end }}
+  {{- else }}
+  Backend:  http://backend.{{ .Values.global.clusterDomain }}.svc.cluster.local:8080/api/v1/claims
+  {{- end }}
 {{- end }}
 {{- if .Values.llamastack.enabled }}
-  LlamaStack: http://claims-llamastack-service.{{ .Values.global.namespace }}.svc.cluster.local:8321
+  LlamaStack: http://llamastack-rhoai-service.{{ .Values.global.namespace }}.svc.cluster.local:8321
 {{- end }}
 
 📦 Components Deployed:
@@ -22,6 +54,12 @@
 {{- end }}
 {{- if .Values.llamastack.enabled }}
   ✅ LlamaStack (OpenShift AI)
+{{- end }}
+{{- if .Values.inference.enabled }}
+  ✅ Llama 3 Reasoning InferenceService (OpenShift AI)
+{{- end }}
+{{- if .Values.embedding.enabled }}
+  ✅ Gemma Embedding InferenceService (OpenShift AI)
 {{- end }}
 {{- if .Values.mcp.ocr.enabled }}
   ✅ OCR MCP Server (EasyOCR)
@@ -38,17 +76,36 @@
 
 🚀 Next Steps:
 
-1. Wait for all pods to be ready:
+ * Wait for all pods to be ready.
    kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance={{ .Release.Name }} -n {{ .Values.global.namespace }} --timeout=300s
+{{- if .Values.backend.enabled }}
 
-2. Initialize database schema:
-   kubectl exec postgresql-0 -n {{ .Values.global.namespace }} -- psql -U claims_user -d claims_db -f /tmp/init.sql
-
-3. Create demo claims:
+ * Optional: create more demo claims
    cd scripts && ./reset_and_create_claims.sh
+{{- end }}
+{{- if .Values.frontend.enabled }}
 
-4. Access the application:
+3. Access the application:
    Open: https://frontend-{{ .Values.global.namespace }}.{{ .Values.global.clusterDomain }}
+  {{- if .Values.frontend.route.enabled }}
+    {{- if .Values.frontend.route.host }}
+      {{- if .Values.frontend.route.tls.enabled }}
+  Open: https://{{ .Values.frontend.route.host }}
+      {{- else }}
+  Open: http://{{ .Values.frontend.route.host }}
+      {{- end }}
+    {{- else }}
+      {{- if .Values.frontend.route.tls.enabled }}
+  Open: https://{{ include "frontend_route_prefix" . }}.{{ .Values.global.clusterDomain }}
+      {{- else }}
+  Open: http://{{ include "frontend_route_prefix" . }}.{{ .Values.global.clusterDomain }}
+      {{- end }}
+    {{- end }}
+  {{- else }}
+  Run: oc port-forward -n {{ .Values.global.namespace }} deploy/frontend 8080
+  Then open: http://127.0.0.1:8080
+  {{- end }}
+{{- end }}
 
 📚 Documentation:
    GitHub: https://github.com/mouachan/agentic-claim-demo

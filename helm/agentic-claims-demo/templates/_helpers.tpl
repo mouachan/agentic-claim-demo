@@ -61,6 +61,20 @@ Get namespace
 {{- define "agentic-claims-demo.namespace" -}}
 {{- .Values.global.namespace }}
 {{- end }}
+{{- define "inference.namespace" -}}
+{{- if ne .Values.inference.namespace "" -}}
+{{- .Values.inference.namespace }}
+{{- else -}}
+{{- .Values.global.namespace }}
+{{- end -}}
+{{- end -}}
+{{- define "embedding.namespace" -}}
+{{- if ne .Values.embedding.namespace "" -}}
+{{- .Values.embedding.namespace }}
+{{- else -}}
+{{- .Values.global.namespace }}
+{{- end -}}
+{{- end -}}
 
 {{/*
 Get image registry
@@ -78,3 +92,58 @@ Build full image name
 {{- $tag := .tag -}}
 {{- printf "%s/%s:%s" $registry $repository $tag }}
 {{- end }}
+
+{{/* multi-arch nodeAffinity */}}
+{{- define "multiarch_node_affinity" -}}
+nodeAffinity:
+  requiredDuringSchedulingIgnoredDuringExecution:
+    nodeSelectorTerms:
+      - matchExpressions:
+          - key: kubernetes.io/arch
+            operator: In
+            values:
+              - amd64
+              - arm64
+{{- end -}}
+
+{{/* route prefix */}}
+{{- define "llamastack_route_prefix_full" -}}
+llamastack-rhoai-{{ .Values.global.namespace }}
+{{- end -}}
+
+{{/* truncated route prefix, complying with 63 chars limit */}}
+{{- define "llamastack_route_prefix" -}}
+{{- include "llamastack_route_prefix_full" . | trunc 63 -}}
+{{- end -}}
+
+{{/* WARNING: valueFrom secrets isn't CIS compliant */}}
+{{/* should export env vars from a script within container, as done with postgres */}}
+{{- define "postgres.env" -}}
+- name: POSTGRES_DATABASE
+  valueFrom:
+    secretKeyRef:
+      name: {{ quote .Values.postgresql.auth.existingSecret }}
+      key: {{ quote .Values.postgresql.auth.secretKeys.databaseKey }}
+- name: POSTGRES_HOST
+  value: postgresql
+- name: POSTGRES_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ quote .Values.postgresql.auth.existingSecret }}
+      key: {{ quote .Values.postgresql.auth.secretKeys.userPasswordKey }}
+- name: POSTGRES_PORT
+  value: "5432"
+- name: POSTGRES_USER
+  valueFrom:
+    secretKeyRef:
+      name: {{ quote .Values.postgresql.auth.existingSecret }}
+      key: {{ quote .Values.postgresql.auth.secretKeys.userNameKey }}
+{{- end }}
+
+{{- define "llamastack.endpoint" -}}
+{{- if .Values.llamastack.fromRhoai -}}
+http://llamastack-rhoai-service.{{ include "agentic-claims-demo.namespace" . }}.svc.cluster.local:8321
+{{- else -}}
+http://llamastack-test-v035.{{ include "agentic-claims-demo.namespace" . }}.svc.cluster.local:8321
+{{- end -}}
+{{- end -}}

@@ -32,6 +32,7 @@ RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cu118
 
 # Install other dependencies (excluding torch/torchvision already installed)
+# hadolint ignore=SC2261
 RUN pip install --no-cache-dir \
     fastapi==0.109.0 \
     uvicorn[standard]==0.27.0 \
@@ -44,10 +45,10 @@ RUN pip install --no-cache-dir \
     easyocr==1.7.0 \
     opencv-python-headless==4.8.1.78 \
     "numpy>=1.21.0,<2.0.0" \
-    "mcp[cli]>=1.8.0"
+    "mcp[cli]>=1.8.0" \
+  && mkdir -p /app/models
 
 # Pre-download EasyOCR models during build to avoid downloading at runtime
-RUN mkdir -p /app/models
 COPY download_models.py .
 ENV EASYOCR_MODULE_PATH=/app/models
 RUN python download_models.py
