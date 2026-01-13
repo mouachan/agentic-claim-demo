@@ -273,6 +273,22 @@ Both OCR and RAG servers implement the **Model Context Protocol (MCP)** using JS
 
 ## Deployment
 
+> **⚠️ Important: Namespace and Cluster Configuration**
+>
+> This deployment is configured for the **`claims-demo`** namespace. The following files contain hardcoded references:
+>
+> **Namespace (`claims-demo`):**
+> - `openshift/configmaps/backend-config.yaml` - All service endpoints
+> - `openshift/deployments/rag-server-deployment.yaml` - LlamaStack and PostgreSQL endpoints
+> - `openshift/deployments/frontend-deployment.yaml` - Backend service URL
+>
+> **Cluster Domain (`CLUSTER_DOMAIN` placeholder):**
+> - `openshift/configmaps/llamastack-config.yaml` - Model inference endpoints (lines 37, 45)
+>   - Must replace `CLUSTER_DOMAIN` with your actual OpenShift cluster domain
+>   - Example: `apps.cluster-abc123.sandbox.opentlc.com`
+>
+> **To deploy to a different namespace or cluster**, manually edit these files before applying the manifests.
+
 ### Prerequisites
 - Red Hat OpenShift AI 3.0
 - OpenShift cluster with GPU nodes (for vLLM)
