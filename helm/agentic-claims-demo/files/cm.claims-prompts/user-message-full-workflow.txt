@@ -1,0 +1,26 @@
+Process this insurance claim:
+
+Claim ID: {claim_id}
+User ID: {user_id}
+Document Path: {document_path}
+Claim Type: {claim_type}
+
+Please:
+1. Extract all information from the document using OCR
+2. Retrieve the user's insurance contracts and coverage details
+3. Find similar historical claims for precedent
+4. Determine if the claim should be approved, denied, or requires manual review
+5. Provide detailed reasoning citing relevant policy sections
+
+Return your final decision as JSON:
+{{
+    "recommendation": "approve" | "deny" | "manual_review",
+    "confidence": 0.0-1.0,
+    "reasoning": "detailed explanation",
+    "relevant_policies": ["policy1", "policy2"],
+    "estimated_coverage_amount": 1234.56
+}}
+
+Workflow configuration:
+- Skip OCR: {skip_ocr}
+- Enable RAG retrieval: {enable_rag}

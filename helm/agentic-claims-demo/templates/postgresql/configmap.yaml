@@ -1,0 +1,54 @@
+{{- if .Values.postgresql.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  name: postgresql
+  namespace: {{ include "agentic-claims-demo.namespace" . }}
+  labels:
+    {{- include "agentic-claims-demo.labels" . | nindent 4 }}
+    app: postgresql
+data:
+  # and since I'm building that image now ... I should really place those scripts over there ...
+  init.sh: |
+    #!/bin/sh
+
+    # read values from Secret
+    POSTGRESQL_ADMIN_PASSWORD="$(cat /cluster-secrets/POSTGRES_ADMIN_PASSWORD)"
+    POSTGRESQL_DATABASE="$(cat /cluster-secrets/{{ .Values.postgresql.auth.secretKeys.databaseKey }})"
+    POSTGRESQL_PASSWORD="$(cat /cluster-secrets/{{ .Values.postgresql.auth.secretKeys.userPasswordKey }})"
+    POSTGRESQL_USER="$(cat /cluster-secrets/{{ .Values.postgresql.auth.secretKeys.userNameKey }})"
+
+    # write custom entrypoint for postgres
+    cat <<EOF >/runtime-secrets/database/entrypoint.sh
+    #!/bin/sh
+    POSTGRESQL_ADMIN_PASSWORD="$POSTGRESQL_ADMIN_PASSWORD"
+    POSTGRESQL_DATABASE="$POSTGRESQL_DATABASE"
+    POSTGRESQL_PASSWORD="$POSTGRESQL_PASSWORD"
+    POSTGRESQL_USER="$POSTGRESQL_USER"
+    export POSTGRESQL_ADMIN_PASSWORD
+    export POSTGRESQL_DATABASE
+    export POSTGRESQL_PASSWORD
+    export POSTGRESQL_USER
+    echo done exporting vars
+    exec /usr/bin/run-postgresql
+    EOF
+    chmod +x /runtime-secrets/database/entrypoint.sh
+    echo done generating entrypoint for postgresql
+
+    # write custom readiness probe for postgresql
+    cat <<EOF >/runtime-secrets/database/ready.sh
+    #!/bin/sh
+    POSTGRESQL_DATABASE="$POSTGRESQL_DATABASE"
+    POSTGRESQL_PASSWORD="$POSTGRESQL_PASSWORD"
+    POSTGRESQL_USER="$POSTGRESQL_USER"
+    export POSTGRESQL_DATABASE
+    export POSTGRESQL_PASSWORD
+    export POSTGRESQL_USER
+    exec /usr/libexec/check-container
+    EOF
+    chmod +x /runtime-secrets/database/ready.sh
+    echo done generating readiness probe for postgres
+{{- end }}

@@ -1,67 +1,156 @@
 {{- if .Values.postgresql.enabled }}
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
   name: postgresql
   namespace: {{ include "agentic-claims-demo.namespace" . }}
   labels:
     {{- include "agentic-claims-demo.labels" . | nindent 4 }}
-    app: postgresql
 spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
+  podManagementPolicy: OrderedReady
   serviceName: postgresql
-  replicas: {{ .Values.postgresql.replicas }}
+  replicas: {{ .Values.postgresql.replicas }} # 1 is the only valid answer, not sure it deserves a variable
+  revisionHistoryLimit: 3
   selector:
     matchLabels:
-      app: postgresql
+      name: postgresql
   template:
     metadata:
       labels:
-        app: postgresql
+        name: postgresql
     spec:
+      affinity:
+{{- include "multiarch_node_affinity" . | nindent 8 }}
+      automountServiceAccountToken: false
       containers:
-      - name: postgresql
-        image: {{ .Values.postgresql.image.registry }}/{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
-        ports:
-        - containerPort: 5432
+        - command:
+            - /scripts/entrypoint.sh
+          env:
+            # https://github.com/pgvector/pgvector/tree/master
+            - name: POSTGRESQL_EXTENSIONS
+              value: vector
+          # closest match would be:
+          # image: registry.redhat.io/rhel8/postgresql-15:1
+          # yet missing vector extension ... let's try 16?
+          # image: registry.redhat.io/rhel10/postgresql-16:10.1
+          # no better ... let's build our own, then ...
+          image: {{ .Values.global.imageRegistry }}/{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          livenessProbe:
+            failureThreshold: 3
+            periodSeconds: 10
+            successThreshold: 1
+            tcpSocket:
+              port: 5432
+            timeoutSeconds: 1
           name: postgresql
-        env:
-        - name: POSTGRESQL_USER
-          valueFrom:
-            secretKeyRef:
-              name: {{ .Values.postgresql.auth.existingSecret }}
-              key: POSTGRES_USER
-        - name: POSTGRESQL_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: {{ .Values.postgresql.auth.existingSecret }}
-              key: {{ .Values.postgresql.auth.secretKeys.userPasswordKey }}
-        - name: POSTGRESQL_DATABASE
-          value: {{ .Values.postgresql.auth.database }}
-        - name: POSTGRESQL_ADMIN_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: {{ .Values.postgresql.auth.existingSecret }}
-              key: {{ .Values.postgresql.auth.secretKeys.userPasswordKey }}
-        volumeMounts:
-        - name: postgresql-data
-          mountPath: /var/lib/pgsql/data
-        resources:
-          {{- toYaml .Values.postgresql.resources | nindent 10 }}
-        livenessProbe:
-          exec:
-            command:
-            - /usr/libexec/check-container
-            - --live
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          exec:
-            command:
-            - /usr/libexec/check-container
-          initialDelaySeconds: 5
-          periodSeconds: 5
+          ports:
+            - containerPort: 5432
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - /scripts/ready.sh
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          securityContext:
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+          startupProbe:
+            failureThreshold: 15
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            tcpSocket:
+              port: 5432
+            timeoutSeconds: 1
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /scripts
+              name: empty
+              subPath: database
+            - mountPath: /var/lib/pgsql
+              name: tmp
+{{- if .Values.postgresql.persistence.enabled }}
+            - mountPath: /var/lib/pgsql/data
+              name: data
+{{- end }}
+      dnsPolicy: ClusterFirst
+      initContainers:
+        - command:
+            - /scripts/init.sh
+          image: {{ .Values.global.imageRegistry }}/{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          name: initsecrets
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /scripts
+              name: helpers
+            - mountPath: /cluster-secrets
+              name: secrets
+            - mountPath: /runtime-secrets/database
+              name: empty
+              subPath: database
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
       volumes:
-      - name: postgresql-data
-        persistentVolumeClaim:
-          claimName: postgresql-data
+        - emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+          name: empty
+        - configMap:
+            defaultMode: 511
+            name: postgresql
+          name: helpers
+        - name: secrets
+          secret:
+            defaultMode: 420
+            secretName: {{ .Values.postgresql.auth.existingSecret }}
+        - emptyDir:
+            sizeLimit: 1Gi
+          name: tmp
+  updateStrategy:
+    type: RollingUpdate
+{{- if .Values.postgresql.persistence.enabled }}
+  volumeClaimTemplates:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.persistence.size }}
+{{- if .Values.postgresql.persistence.storageClass }}
+        storageClassName: {{ .Values.postgresql.persistence.storageClass }}
+{{- end }}
+{{- end }}
 {{- end }}

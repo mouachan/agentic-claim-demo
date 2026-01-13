@@ -15,7 +15,7 @@ import random
 # Database configuration
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "claims_db")
+POSTGRES_DB = os.getenv("POSTGRES_DATABASE", "claims_db")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "claims_user")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "claims_pass")
 
@@ -25,7 +25,7 @@ EMBEDDING_URL = os.getenv("EMBEDDING_URL", "https://embeddinggemma-300m-edg-demo
 # User data
 USERS_DATA = [
     {
-        "user_id": "user_001",
+        "user_id": "USER001",
         "email": "john.doe@example.com",
         "full_name": "John Doe",
         "date_of_birth": "1985-03-15",
@@ -33,7 +33,7 @@ USERS_DATA = [
         "address": "123 Main St, Springfield, IL 62701"
     },
     {
-        "user_id": "user_002",
+        "user_id": "USER002",
         "email": "jane.smith@example.com",
         "full_name": "Jane Smith",
         "date_of_birth": "1990-07-22",
@@ -41,7 +41,7 @@ USERS_DATA = [
         "address": "456 Oak Ave, Chicago, IL 60601"
     },
     {
-        "user_id": "user_003",
+        "user_id": "USER003",
         "email": "michael.johnson@example.com",
         "full_name": "Michael Johnson",
         "date_of_birth": "1978-11-30",
@@ -49,7 +49,7 @@ USERS_DATA = [
         "address": "789 Pine St, Peoria, IL 61602"
     },
     {
-        "user_id": "user_004",
+        "user_id": "USER004",
         "email": "sarah.williams@example.com",
         "full_name": "Sarah Williams",
         "date_of_birth": "1992-05-18",
@@ -57,7 +57,7 @@ USERS_DATA = [
         "address": "321 Maple Dr, Naperville, IL 60540"
     },
     {
-        "user_id": "user_005",
+        "user_id": "USER005",
         "email": "robert.brown@example.com",
         "full_name": "Robert Brown",
         "date_of_birth": "1982-09-25",

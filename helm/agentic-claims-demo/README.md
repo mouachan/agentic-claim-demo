@@ -57,9 +57,19 @@ podman push quay.io/your-org/ocr-server:latest
 cd ../rag_server
 podman build -t quay.io/your-org/rag-server:latest .
 podman push quay.io/your-org/rag-server:latest
+
+# Build and push Postgres
+cd ../../database
+podman build -t quay.io/your-org/postgres:latest -f Dockerfile .
+podman push quay.io/your-org/postgres:latest
+
+# Optional: hfcli image
+cd ../hfcli
+podman build -t quay.io/your-org/hfcli:latest -f Dockerfile .
+podman push quay.io/your-org/hfcli:latest
 ```
 
-**Note:** Helm does **NOT** build images. It only deploys pre-built images from your registry.
+**Note:** Helm does **NOT** build images. It only deploys existing images from your registry.
 
 ### 2. Configure Values
 
@@ -73,9 +83,9 @@ global:
   # Replace with your image registry (same as used in podman push)
   imageRegistry: "quay.io/your-org"
 
-# Update PostgreSQL password (base64 encoded)
+# Update PostgreSQL password
 secrets:
-  postgresPassword: "your-base64-encoded-password"
+  postgresPassword: "your-password"
 ```
 
 ### 3. Install the Chart
@@ -101,30 +111,16 @@ kubectl wait --for=condition=ready pod \
   --timeout=300s
 ```
 
-### 5. Initialize Database
+### 5. Create Demo Claims
 
-```bash
-# Copy schema to pod
-oc cp database/init.sql postgresql-0:/tmp/init.sql -n claims-demo
-
-# Execute schema
-oc exec postgresql-0 -n claims-demo -- \
-  psql -U claims_user -d claims_db -f /tmp/init.sql
-
-# Seed data
-oc cp database/seed_data/001_sample_data.sql postgresql-0:/tmp/seed.sql -n claims-demo
-oc exec postgresql-0 -n claims-demo -- \
-  psql -U claims_user -d claims_db -f /tmp/seed.sql
-```
-
-### 6. Create Demo Claims
+Database already includes a few claims. Could provision more:
 
 ```bash
 cd scripts
 ./reset_and_create_claims.sh
 ```
 
-### 7. Access the Application
+### 6. Access the Application
 
 ```bash
 # Get frontend URL
@@ -157,9 +153,6 @@ echo "https://frontend-claims-demo.apps.cluster-xxx.opentlc.com"
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `llamastack.enabled` | Enable LlamaStack deployment | `true` |
-| `llamastack.image.tag` | LlamaStack version | `via OpenShift AI operator` |
-| `llamastack.model.name` | LLM model name | `llama-3-3-70b` |
-| `llamastack.embedding.model` | Embedding model | `gemma-300m` |
 
 ### MCP Servers
 

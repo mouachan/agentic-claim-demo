@@ -1,7 +1,10 @@
 {{- if .Values.backend.enabled }}
+---
 apiVersion: v1
 kind: Service
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "4" # after llamastackdistribution
   name: backend
   namespace: {{ include "agentic-claims-demo.namespace" . }}
   labels:
@@ -10,10 +13,10 @@ metadata:
 spec:
   type: {{ .Values.backend.service.type }}
   ports:
-  - port: {{ .Values.backend.service.port }}
-    targetPort: 8000
-    protocol: TCP
-    name: http
+    - port: {{ .Values.backend.service.port }}
+      targetPort: 8000
+      protocol: TCP
+      name: http
   selector:
     app: backend
 {{- end }}

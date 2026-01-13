@@ -1,19 +1,22 @@
+---
 version: '3.8'
 
 services:
   # PostgreSQL with pgvector
   postgresql:
-    image: pgvector/pgvector:pg16
+    build:
+      content: ./database
+      dockerfile: Dockerfile
     container_name: claims-postgres
     environment:
-      POSTGRES_DB: claims_db
+      POSTGRES_ADMIN_PASSWORD: claims_admin_pass
+      POSTGRES_DATABASE: claims_db
       POSTGRES_USER: claims_user
       POSTGRES_PASSWORD: claims_pass
-      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/pgsql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./database/seed_data:/docker-entrypoint-initdb.d/seed_data:ro
     healthcheck:
@@ -35,7 +38,7 @@ services:
       ENVIRONMENT: development
       POSTGRES_HOST: postgresql
       POSTGRES_PORT: 5432
-      POSTGRES_DB: claims_db
+      POSTGRES_DATABASE: claims_db
       POSTGRES_USER: claims_user
       POSTGRES_PASSWORD: claims_pass
       # Ollama sur macOS : host.docker.internal permet d'accéder à localhost
@@ -52,7 +55,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
-      - ./documents:/mnt/documents
+      - ./documents:/claims_documents
     networks:
       - claims-network
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -69,10 +72,9 @@ services:
     ports:
       - "8081:8080"
     volumes:
-      - ./documents:/mnt/documents:ro
+      - ./documents:/claims_documents:ro
     networks:
       - claims-network
-    # Note: Implémentation du serveur à créer
 
   # MCP RAG Server
   rag-server:
@@ -83,7 +85,7 @@ services:
     environment:
       POSTGRES_HOST: postgresql
       POSTGRES_PORT: 5432
-      POSTGRES_DB: claims_db
+      POSTGRES_DATABASE: claims_db
       POSTGRES_USER: claims_user
       POSTGRES_PASSWORD: claims_pass
       LLAMASTACK_ENDPOINT: ${LLAMASTACK_ENDPOINT:-http://host.docker.internal:11434}
@@ -96,7 +98,6 @@ services:
         condition: service_healthy
     networks:
       - claims-network
-    # Note: Implémentation du serveur à créer
 
   # Frontend React
   frontend:

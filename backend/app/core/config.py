@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     # Database
     postgres_host: str = "postgresql-service"
     postgres_port: int = 5432
-    postgres_db: str = "claims_db"
+    postgres_database: str = "claims_db"
     postgres_user: str
     postgres_password: str
     database_pool_size: int = 10
@@ -48,7 +48,7 @@ class Settings(BaseSettings):
         """Construct PostgreSQL database URL."""
         return (
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
         )
 
     @property
@@ -56,7 +56,7 @@ class Settings(BaseSettings):
         """Construct async PostgreSQL database URL."""
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
         )
 
     # LlamaStack (OpenShift AI)
