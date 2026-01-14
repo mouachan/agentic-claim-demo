@@ -2,6 +2,11 @@ FROM registry.redhat.io/rhel10/postgresql-16:10.1 as builder
 
 USER root
 
+# Allow optional proxy configuration at build time
+ARG HTTPS_PROXY=""
+ARG HTTP_PROXY=""
+ARG NO_PROXY=""
+
 COPY ./rhel-misses.repo /tmp/
 
 RUN set -x \
@@ -19,7 +24,6 @@ RUN set -x \
 WORKDIR /build-extension
 
 RUN set -x \
-    && export HTTPS_PROXY=http://egress-http-proxy:8080 \
     && git clone -b v0.8.1 https://github.com/pgvector/pgvector
 
 WORKDIR /build-extension/pgvector
