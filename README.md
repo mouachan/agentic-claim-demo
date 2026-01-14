@@ -345,6 +345,33 @@ podman build -t quay.io/your-org/frontend:latest .
 podman push quay.io/your-org/frontend:latest
 ```
 
+**1.4 Build PostgreSQL Custom Image (Required)**
+
+Since standard Red Hat PostgreSQL images don't include the pgvector extension, you need to build a custom image:
+
+```bash
+cd database
+podman build -t <your-registry>/postgresql-pgvector:latest .
+podman push <your-registry>/postgresql-pgvector:latest
+```
+
+**Optional: Build with proxy (if required in your environment)**
+```bash
+podman build \
+  --build-arg HTTPS_PROXY=http://your-proxy:8080 \
+  --build-arg HTTP_PROXY=http://your-proxy:8080 \
+  --build-arg NO_PROXY=".svc,.local,127.0.0.1" \
+  -t <your-registry>/postgresql-pgvector:latest \
+  .
+podman push <your-registry>/postgresql-pgvector:latest
+```
+
+**Update the StatefulSet image reference:**
+Edit `openshift/deployments/postgresql-statefulset.yaml` and update the image reference to match your registry:
+```yaml
+image: <your-registry>/postgresql-pgvector:latest
+```
+
 #### Step 2: Deploy Database
 
 **2.1 Create PostgreSQL Secret**
