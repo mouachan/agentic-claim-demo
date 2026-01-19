@@ -335,6 +335,15 @@ async def process_claim(
                 session_id = session_response.json()["session_id"]
                 logger.info(f"Created session: {session_id}")
 
+                # Save agent_id and session_id immediately for real-time status tracking
+                if not claim.claim_metadata:
+                    claim.claim_metadata = {}
+                claim.claim_metadata["llamastack_agent_id"] = agent_id
+                claim.claim_metadata["llamastack_session_id"] = session_id
+                flag_modified(claim, "claim_metadata")
+                await db.commit()
+                logger.info(f"Saved LlamaStack metadata to DB for real-time tracking")
+
                 # Step 3: Execute agent - Load user message from template
                 if not process_request.enable_rag and not process_request.skip_ocr:
                     # OCR-only mode
@@ -655,14 +664,24 @@ async def get_claim_status(
             except Exception as e:
                 logger.warning(f"Could not fetch LlamaStack session history: {str(e)}")
 
-        # Determine progress
-        step_progress = {"ocr": 25, "rag_retrieval": 75, "llm_decision": 100}
-
-        if processing_steps:
-            current_step = processing_steps[-1].step_name
-            progress = step_progress.get(current_step, 50)
-        elif claim.status in [models.ClaimStatus.completed, models.ClaimStatus.failed, models.ClaimStatus.manual_review]:
+        # Determine progress - Check claim status first
+        if claim.status in [models.ClaimStatus.completed, models.ClaimStatus.failed, models.ClaimStatus.manual_review]:
             progress = 100.0
+        elif processing_steps:
+            current_step = processing_steps[-1].step_name
+            # Map actual tool names to progress percentages
+            step_progress = {
+                "ocr_extract_claim_info": 25,
+                "retrieve_user_info": 50,
+                "search_knowledge_base": 75,
+                "retrieve_similar_claims": 75,
+                "ocr": 25,
+                "rag_retrieval": 75,
+                "llm_decision": 100
+            }
+            progress = step_progress.get(current_step, 50)
+        else:
+            progress = 0.0
 
         return schemas.ClaimStatusResponse(
             claim_id=claim_id,

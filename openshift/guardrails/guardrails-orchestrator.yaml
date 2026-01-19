@@ -16,7 +16,8 @@ spec:
   # Enable built-in TrustyAI detectors (HAP, PII, etc.) as sidecars
   enableBuiltInDetectors: true
 
-  # Disable guardrails gateway
+  # Disable guardrails gateway - using LlamaStack Shields approach instead
+  # See GUARDRAILS_WORK_IN_PROGRESS.md for details
   enableGuardrailsGateway: false
 
   # Number of replicas
