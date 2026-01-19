@@ -13,7 +13,7 @@ from psycopg2.extras import Json
 # Database configuration - can be overridden by environment variables
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "claims_db")
+POSTGRES_DB = os.getenv("POSTGRES_DATABASE", "claims_db")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "claims_user")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "claims_pass")
 

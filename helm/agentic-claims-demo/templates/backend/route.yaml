@@ -1,7 +1,10 @@
 {{- if and .Values.backend.enabled .Values.backend.route.enabled }}
+---
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "4" # after llamastackdistribution
   name: backend
   namespace: {{ include "agentic-claims-demo.namespace" . }}
   labels:
@@ -11,7 +14,7 @@ spec:
   {{- if .Values.backend.route.host }}
   host: {{ .Values.backend.route.host }}
   {{- else }}
-  host: backend-{{ .Values.global.namespace }}.{{ .Values.global.clusterDomain }}
+  host: {{ include "backend_route_prefix" . }}.{{ .Values.global.clusterDomain }}
   {{- end }}
   to:
     kind: Service

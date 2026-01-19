@@ -1,3 +1,4 @@
+---
 # =============================================================================
 # Global Configuration
 # =============================================================================
@@ -14,6 +15,68 @@ global:
   # Image pull policy
   imagePullPolicy: IfNotPresent
 
+  proxies:
+    HTTP_PROXY: ""
+    NO_PROXY: .svc,.local,127.0.0.1
+
+inference:
+  enabled: true
+  # deploy in same-namespace by default
+  namespace: ""
+  model:
+    pvc:
+      # WARNING: that new model weights 72.7GB?!
+      # https://huggingface.co/RedHatAI/Llama-3.3-70B-Instruct-quantized.w8a8/tree/main
+      size: 100Gi
+      storageClass: ""
+    # oci storage is faster to get up and running
+    # & slower if you need to re-download model image every couple days
+    source: oci
+    address: registry.redhat.io/rhelai1/modelcar-llama-3-3-70b-instruct-quantized-w8a8:1.5
+    # alternatively, go with a PVC:
+    # - make sure to set .hfcli.token first provisioning model into PVC
+    # - request access to model (?) https://huggingface.co/RedHatAI/Llama-3.3-70B-Instruct-quantized.w8a8
+    #   (maybe not necessary? those from Llama org: definitely)
+    # source: huggingface
+    # address: RedHatAI/Llama-3.3-70B-Instruct-quantized.w8a8
+    name: llama-3-3-70b-instruct-quantized-w8a8
+  resources:
+    limits:
+      cpu: "8"
+      memory: 16Gi
+      nvidia.com/gpu: "4"
+    requests:
+      cpu: "8"
+      memory: 16Gi
+      nvidia.com/gpu: "4"
+  placement: {}
+
+embedding:
+  enabled: true
+  # deploy in same-namespace by default
+  namespace: ""
+  model:
+    pvc:
+      size: 10Gi
+      storageClass: ""
+    # https://docs.redhat.com/en/documentation/red_hat_ai_inference_server/3.0/html/validated_models/red_hat_ai_validated_models
+    # no OCI version for that model? then again, I'm "guessing" which model to use here ...
+    source: huggingface
+    # - make sure to set .hfcli.token firs provisioning model into PVC
+    # - request access to model: https://huggingface.co/google/embeddinggemma-300m
+    address: google/embeddinggemma-300m
+    name: embeddinggemma-300m
+  resources:
+    limits:
+      cpu: "2"
+      memory: 8Gi
+      nvidia.com/gpu: "1"
+    requests:
+      cpu: "1"
+      memory: 8Gi
+      nvidia.com/gpu: "1"
+  placement: {}
+
 # =============================================================================
 # PostgreSQL Database
 # =============================================================================
@@ -21,6 +84,8 @@ postgresql:
   enabled: true
 
   # StatefulSet configuration
+  # not sure that one makes sense. unless using a PostgresCluster/crunchy or some cluster-capable setup:
+  # scaling postgres to 2 replicas isn't as easy as changing this
   replicas: 1
 
   # Authentication
@@ -31,6 +96,8 @@ postgresql:
     existingSecret: postgresql-secret
     secretKeys:
       userPasswordKey: POSTGRES_PASSWORD
+      userNameKey: POSTGRES_USER
+      databaseKey: POSTGRES_DATABASE
 
   # Storage
   persistence:
@@ -49,11 +116,48 @@ postgresql:
 
   # Image
   image:
-    registry: registry.redhat.io
-    repository: rhel9/postgresql-15
+    repository: postgresql
     tag: latest
 
 # =============================================================================
+# LlamaStack
+# =============================================================================
+llamastack:
+  enabled: true
+
+  # Route (OpenShift)
+  route:
+    enabled: true
+    host: ""  # Auto-generated if empty
+    tls:
+      enabled: false
+
+  # Model configuration
+  model:
+    # endpoint defaults to that of InferenceService deployed as part of this Chart
+    # endpoint: "https://llama-3-3-70b-llama-3-3-70b.apps.CLUSTER_DOMAIN/v1"
+    apiToken: fake
+
+  # Embedding model
+  embedding:
+    # endpoint defaults to that of InferenceService deployed as part of this Chart
+    # endpoint: "https://embeddinggemma-300m-edg-demo.apps.CLUSTER_DOMAIN/v1"
+    dimension: 768
+
+  # Resources
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+# =============================================================================
+# MCP Servers
+# =============================================================================
+mcp:
+  # OCR Server
   ocr:
     enabled: true
     replicas: 1
@@ -96,15 +200,15 @@ postgresql:
     # Environment variables
     env:
       LOG_LEVEL: "INFO"
-      EMBEDDING_MODEL: "gemma-300m"
 
     resources:
       requests:
-        cpu: 500m
-        memory: 1Gi
+        cpu: 1000m
+        memory: 6Gi
       limits:
         cpu: 2000m
-        memory: 2Gi
+        # had 2Gi: OOMs processing its first claim, llamastack 500s/tells about rag refusing connections as it restarts
+        memory: 6Gi
 
 # =============================================================================
 # Backend API
@@ -113,7 +217,8 @@ backend:
   enabled: true
 
   # Deployment
-  replicas: 2
+  # unless PVC has RWX -> can't go beyond 1
+  replicas: 1
 
   # Image
   image:
@@ -131,6 +236,12 @@ backend:
     host: ""  # Auto-generated if empty
     tls:
       enabled: false
+
+  pvc:
+    accessMode: ReadWriteOnce
+    initPvc: false
+    size: 5Gi
+    storageClass: ""
 
   # Environment variables
   env:
@@ -183,14 +294,30 @@ frontend:
       cpu: 500m
       memory: 512Mi
 
+hfcli:
+  image:
+    repository: hfcli
+    tag: latest
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+    limits:
+      cpu: "1200m"
+      memory: 4Gi
+  # only required when pulling models from HF
+  # leaving placeholder emptying value skips those jobs
+  token: hf_<your-token>
+
 # =============================================================================
 # Secrets
 # =============================================================================
 secrets:
-  # PostgreSQL password (base64 encoded)
+  # PostgreSQL password
   # IMPORTANT: Replace with your own password!
-  # Generate with: echo -n "your-strong-password" | base64
-  postgresPassword: "REPLACE_WITH_BASE64_ENCODED_PASSWORD"
+  postgresPassword: "REPLACE_WITH_PASSWORD"
+  # loading vector extension requires admin privileges/couldn't run init with regular user
+  postgresAdminPassword: "REPLACE_WITH_ADMIN_PASSWORD"
 
   # Create secrets automatically
   create: true

@@ -1,0 +1,44 @@
+{{- if and .Values.llamastack.enabled }}
+---
+apiVersion: llamastack.io/v1alpha1
+kind: LlamaStackDistribution
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "3" # after inferenceservice
+  labels:
+    {{- include "agentic-claims-demo.labels" . | nindent 4 }}
+  name: llamastack-rhoai
+  namespace: {{ include "agentic-claims-demo.namespace" . }}
+spec:
+  # comes with a PVC/stick to single replica
+  # WARNING: llamastack operator keeps updating that deployment
+  replicas: 1
+  server:
+    containerSpec:
+      env:
+        {{- include "llamastack.env" . | nindent 8 }}
+      name: llama-stack
+      port: 8321
+      resources:
+        {{- toYaml .Values.llamastack.resources | nindent 8 }}
+    distribution:
+      # why/what's this?!
+      name: rh-dev
+    storage:
+      # checking CRD, we can't set a custom StorageClass here?
+      size: 20Gi
+    # looking at CRD, there's that ...
+    podOverrides:
+      volumeMounts:
+        - mountPath: /opt/app-root/run.yaml
+          name: config
+          subPath: run.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: llamastack-rhoai
+# but maybe that one's better?
+# => should try again ... wasted a day re-writing llamastack configuration, as format changes a lot, compared with initial material from demo
+#     userConfig:
+#       configMapName: llamastack-rhoai
+{{- end }}

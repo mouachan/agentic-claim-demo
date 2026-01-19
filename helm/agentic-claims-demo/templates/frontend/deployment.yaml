@@ -1,7 +1,10 @@
 {{- if .Values.frontend.enabled }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "5" # after frontend
   name: frontend
   namespace: {{ include "agentic-claims-demo.namespace" . }}
   labels:
@@ -12,6 +15,11 @@ spec:
   selector:
     matchLabels:
       app: frontend
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
   template:
     metadata:
       labels:
@@ -25,9 +33,6 @@ spec:
         - containerPort: 8080
           name: http
           protocol: TCP
-        env:
-        - name: REACT_APP_API_URL
-          value: "https://backend-{{ .Values.global.namespace }}.{{ .Values.global.clusterDomain }}"
         resources:
           {{- toYaml .Values.frontend.resources | nindent 10 }}
         livenessProbe:

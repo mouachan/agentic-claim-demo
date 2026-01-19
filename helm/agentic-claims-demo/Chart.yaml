@@ -1,3 +1,4 @@
+---
 apiVersion: v2
 name: agentic-claims-demo
 description: AI-powered insurance claims processing with LlamaStack and MCP agents
