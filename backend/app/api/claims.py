@@ -49,6 +49,16 @@ router = APIRouter()
 # Constants
 LLAMASTACK_TIMEOUT = 300.0  # 5 minutes for agent operations
 
+# Tool to agent mapping (hardcoded for now)
+# TODO: Make this configurable via ConfigMap
+TOOL_AGENT_MAPPING = {
+    "ocr_extract_claim_info": "ocr-agent",
+    "ocr_document": "ocr-agent",
+    "retrieve_user_info": "rag-agent",
+    "retrieve_similar_claims": "rag-agent",
+    "search_knowledge_base": "rag-agent",
+}
+
 
 # =============================================================================
 # Utility Functions
@@ -577,17 +587,8 @@ async def get_claim_status(
             for step_data in steps_data:
                 tool_name = step_data.get("tool_name", "unknown")
 
-                # Map to agent names
-                if "ocr" in tool_name.lower():
-                    agent_name = "ocr-agent"
-                elif "retrieve_user_info" in tool_name.lower():
-                    agent_name = "rag-agent"
-                elif "retrieve_similar_claims" in tool_name.lower():
-                    agent_name = "rag-agent"
-                elif "search_knowledge_base" in tool_name.lower():
-                    agent_name = "rag-agent"
-                else:
-                    agent_name = "unknown"
+                # Map to agent names using configurable mapping
+                agent_name = TOOL_AGENT_MAPPING.get(tool_name, "unknown")
 
                 processing_steps.append(schemas.ProcessingStepLog(
                     step_name=tool_name,
@@ -729,17 +730,8 @@ async def get_claim_logs(
                                         # Keep exact tool names for better frontend display
                                         step_name = tool_name
 
-                                        # Map to agent names
-                                        if "ocr" in tool_name.lower():
-                                            agent_name = "ocr-agent"
-                                        elif "retrieve_user_info" in tool_name.lower():
-                                            agent_name = "rag-agent"
-                                        elif "retrieve_similar_claims" in tool_name.lower():
-                                            agent_name = "rag-agent"
-                                        elif "search_knowledge_base" in tool_name.lower():
-                                            agent_name = "rag-agent"
-                                        else:
-                                            agent_name = "unknown"
+                                        # Map to agent names using configurable mapping
+                                        agent_name = TOOL_AGENT_MAPPING.get(tool_name, "unknown")
 
                                         # Get output data from tool_responses
                                         output_data = None

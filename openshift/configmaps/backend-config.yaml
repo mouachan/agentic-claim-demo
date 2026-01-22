@@ -64,3 +64,7 @@ data:
   
   # Prompts Directory
   PROMPTS_DIR: "/app/prompts"
+
+  # Tool to Agent Mapping (for processing steps display)
+  # Format: tool_name:agent_name,tool_name:agent_name,...
+  TOOL_AGENT_MAPPING: "ocr_extract_claim_info:ocr-agent,ocr_document:ocr-agent,retrieve_user_info:rag-agent,retrieve_similar_claims:rag-agent,search_knowledge_base:rag-agent"
