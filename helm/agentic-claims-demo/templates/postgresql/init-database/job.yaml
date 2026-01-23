@@ -7,7 +7,7 @@ metadata:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
     argocd.argoproj.io/sync-wave: "2"
-  generateName: init-postgres-
+  name: init-postgres
   labels:
     {{- include "agentic-claims-demo.labels" . | nindent 4 }}
   namespace: {{ include "agentic-claims-demo.namespace" . }}
@@ -29,7 +29,11 @@ spec:
           env:
             - name: HOME
               value: /tmp
+          {{- if contains "/" .Values.postgresql.image.repository }}
+          image: {{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+          {{- else }}
           image: {{ .Values.global.imageRegistry }}/{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+          {{- end }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           resources:
             limits:
