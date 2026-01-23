@@ -1,0 +1,44 @@
+{{- if .Values.guardrails.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.guardrails.configMapName }}
+  namespace: {{ include "agentic-claims-demo.namespace" . }}
+  labels:
+    {{- include "agentic-claims-demo.labels" . | nindent 4 }}
+    app: claims-processing
+    component: guardrails
+data:
+  config.yaml: |
+    # Chat generation service configuration
+    chat_generation:
+      service:
+        # LlamaStack inference endpoint
+        hostname: {{ .Values.guardrails.chatGeneration.hostname }}
+        port: {{ .Values.guardrails.chatGeneration.port }}
+
+    # Detector configurations
+    detectors:
+      # HAP (Hate and Profanity) detector - using built-in detector sidecar
+      hap:
+        type: text_contents
+        service:
+          # Built-in TrustyAI detectors are on port 8080
+          hostname: {{ .Values.guardrails.detectors.hap.hostname }}
+          port: {{ .Values.guardrails.detectors.hap.port }}
+        chunker_id: {{ .Values.guardrails.detectors.hap.chunkerId }}
+        default_threshold: {{ .Values.guardrails.detectors.hap.threshold }}
+        enabled: {{ .Values.guardrails.detectors.hap.enabled }}
+
+      # PII (Personally Identifiable Information) detector - using built-in detector sidecar
+      pii:
+        type: text_contents
+        service:
+          # Built-in TrustyAI detectors are on port 8080
+          hostname: {{ .Values.guardrails.detectors.pii.hostname }}
+          port: {{ .Values.guardrails.detectors.pii.port }}
+        chunker_id: {{ .Values.guardrails.detectors.pii.chunkerId }}
+        default_threshold: {{ .Values.guardrails.detectors.pii.threshold }}
+        enabled: {{ .Values.guardrails.detectors.pii.enabled }}
+{{- end }}

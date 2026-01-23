@@ -321,3 +321,62 @@ secrets:
 
   # Create secrets automatically
   create: true
+
+# =============================================================================
+# Guardrails (TrustyAI)
+# =============================================================================
+guardrails:
+  enabled: false  # Disabled by default - requires RHOAI 3.0+ with TrustyAI operator
+
+  name: claims-guardrails
+  configMapName: claims-guardrails-config
+
+  # GuardrailsOrchestrator configuration
+  enableBuiltInDetectors: true  # Enable HAP, PII detectors as sidecars
+  enableGuardrailsGateway: false
+  replicas: 1
+  logLevel: "info"
+
+  tls:
+    enabled: false
+
+  # Chat generation service (LlamaStack)
+  chatGeneration:
+    hostname: claims-llamastack-service.claims-demo.svc.cluster.local
+    port: 8321
+
+  # Detector configurations for ConfigMap
+  detectors:
+    hap:
+      hostname: claims-guardrails-service.claims-demo.svc.cluster.local
+      port: 8080
+      chunkerId: whole_doc_chunker
+      threshold: 0.5
+      enabled: true
+
+    pii:
+      hostname: claims-guardrails-service.claims-demo.svc.cluster.local
+      port: 8080
+      chunkerId: whole_doc_chunker
+      threshold: 0.7
+      enabled: true
+
+    # Llama Guard 3 1B detector InferenceService
+    llamaGuard:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 1
+      storageUri: "oci://quay.io/rh-aiservices-bu/llama-guard-3-1b-modelcar:2.0.0"
+      resources:
+        requests:
+          cpu: "1"
+          memory: 8Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 10Gi
+          nvidia.com/gpu: "1"
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+      placement: {}
