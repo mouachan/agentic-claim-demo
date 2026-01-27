@@ -8,7 +8,7 @@ echo ============================================
 
 # GitHub repository details
 REPO=mouachan/agentic-claim-demo
-BRANCH=main
+BRANCH=responses-api-migration
 PDF_DIR=backend/test_data/claim_documents
 
 # Target directory in PVC
