@@ -293,13 +293,13 @@ async def process_claim(
             if not process_request.skip_ocr:
                 tools.append({
                     "type": "mcp",
-                    "server_url": "http://ocr-server-service.claims-demo.svc.cluster.local:3001",
+                    "server_url": f"{settings.ocr_server_url}/sse",
                     "server_label": "ocr-server"
                 })
             if process_request.enable_rag:
                 tools.append({
                     "type": "mcp",
-                    "server_url": "http://rag-server-service.claims-demo.svc.cluster.local:3002",
+                    "server_url": f"{settings.rag_server_url}/sse",
                     "server_label": "rag-server"
                 })
 
