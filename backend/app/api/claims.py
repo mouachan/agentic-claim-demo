@@ -360,115 +360,82 @@ async def process_claim(
                             if not isinstance(event, dict):
                                 continue
 
-                            # Capture response_id if present
-                            if "id" in event and not response_id:
-                                response_id = event["id"]
-                                logger.info(f"Captured response_id: {response_id}")
-                                # Save response_id immediately for tracking
+                            event_type = event.get("type", "")
+                            logger.info(f"SSE Event type: {event_type}")
+
+                            # Capture response_id from response.created
+                            if event_type == "response.created":
+                                response_obj = event.get("response", {})
+                                response_id = response_obj.get("id")
+                                if response_id:
+                                    logger.info(f"Captured response_id: {response_id}")
+                                    # Save response_id immediately for tracking
+                                    if not claim.claim_metadata:
+                                        claim.claim_metadata = {}
+                                    claim.claim_metadata["llamastack_response_id"] = response_id
+                                    claim.claim_metadata["processing_steps"] = []
+                                    flag_modified(claim, "claim_metadata")
+                                    await db.commit()
+
+                            # Collect streaming text from response.output_text.delta
+                            elif event_type == "response.output_text.delta":
+                                delta = event.get("delta", "")
+                                if delta:
+                                    final_response += delta
+                                    logger.info(f"Received text delta: {len(delta)} chars")
+
+                            # Get final response from response.completed
+                            elif event_type == "response.completed":
+                                response_obj = event.get("response", {})
+                                output = response_obj.get("output", [])
+
+                                # Extract final text from output
+                                if output and len(output) > 0:
+                                    message = output[0]
+                                    content_list = message.get("content", [])
+
+                                    # Concatenate all text content
+                                    for content_item in content_list:
+                                        if content_item.get("type") == "output_text":
+                                            text = content_item.get("text", "")
+                                            if text and not final_response:
+                                                # Use completed response if we didn't get it from streaming
+                                                final_response = text
+                                                logger.info(f"Got final response from completed: {len(final_response)} chars")
+
+                                # Check for tool calls in the response
+                                # TODO: Tool calls might be in a different structure in Responses API
+                                # For now, we'll log and handle when we see the actual format
+                                if "tool_calls" in response_obj:
+                                    logger.info(f"Tool calls found in response.completed")
+
+                            # Handle function call events if they exist
+                            elif event_type == "response.function_call_arguments.delta":
+                                # Track tool executions
+                                tool_execution_count += 1
+                                logger.info(f"Tool execution #{tool_execution_count} in progress")
+
+                            elif event_type == "response.function_call_arguments.done":
+                                # Tool call completed
+                                call_id = event.get("call_id", "")
+                                name = event.get("name", "")
+                                logger.info(f"Tool completed: {name} (call_id: {call_id})")
+
+                                # Save step to metadata
+                                step_record = {
+                                    "tool_name": name,
+                                    "completed_at": datetime.now(timezone.utc).isoformat()
+                                }
+
                                 if not claim.claim_metadata:
                                     claim.claim_metadata = {}
-                                claim.claim_metadata["llamastack_response_id"] = response_id
-                                claim.claim_metadata["processing_steps"] = []
+                                if "processing_steps" not in claim.claim_metadata:
+                                    claim.claim_metadata["processing_steps"] = []
+
+                                claim.claim_metadata["processing_steps"].append(step_record)
                                 flag_modified(claim, "claim_metadata")
                                 await db.commit()
-
-                            # Parse SSE event payload
-                            if "event" not in event:
-                                continue
-
-                            payload = event["event"].get("payload", {})
-                            step_type = payload.get("step_type")
-                            event_type = payload.get("event_type")
-
-                            # Debug: log all events
-                            logger.info(f"SSE Event - step_type: {step_type}, event_type: {event_type}")
-
-                            # Track tool executions
-                            if step_type == "tool_execution":
-                                if event_type == "step_start":
-                                    tool_execution_count += 1
-                                    # Log entire payload to find tool name
-                                    logger.info(f"Tool execution #{tool_execution_count} - step_start payload keys: {payload.keys()}")
-
-                                    # Try multiple places where tool name might be
-                                    tool_name = None
-                                    step_details = payload.get("step_details", {})
-                                    tool_calls = step_details.get("tool_calls", [])
-
-                                    if tool_calls and len(tool_calls) > 0:
-                                        tool_name = tool_calls[0].get("tool_name")
-
-                                    # Also check top-level payload
-                                    if not tool_name and "tool_name" in payload:
-                                        tool_name = payload.get("tool_name")
-
-                                    if tool_name:
-                                        logger.info(f"Tool execution #{tool_execution_count} started: {tool_name}")
-                                    else:
-                                        logger.info(f"Tool execution #{tool_execution_count} started (name not yet available)")
-                                elif event_type == "step_complete":
-                                    step_details = payload.get("step_details", {})
-                                    tool_calls = step_details.get("tool_calls", [])
-                                    tool_responses = step_details.get("tool_responses", [])
-
-                                    # Save each completed step in real-time
-                                    for tool_call in tool_calls:
-                                        tool_name = tool_call.get('tool_name')
-                                        logger.info(f"  Tool completed: {tool_name}")
-
-                                        # Add step to metadata for real-time tracking
-                                        step_record = {
-                                            "tool_name": tool_name,
-                                            "completed_at": datetime.now(timezone.utc).isoformat()
-                                        }
-
-                                        if not claim.claim_metadata:
-                                            claim.claim_metadata = {}
-                                        if "processing_steps" not in claim.claim_metadata:
-                                            claim.claim_metadata["processing_steps"] = []
-
-                                        claim.claim_metadata["processing_steps"].append(step_record)
-                                        flag_modified(claim, "claim_metadata")
-                                        await db.commit()
-                                        logger.info(f"Saved step to DB: {tool_name}")
-
-                                    for tool_response in tool_responses:
-                                        content = tool_response.get("content", "")
-                                        # Truncate long responses for logging
-                                        content_preview = content[:500] if len(content) > 500 else content
-                                        logger.info(f"  Tool response: {content_preview}")
-
-                            # Collect inference text (streaming)
-                            elif step_type == "inference":
-                                if event_type == "step_progress":
-                                    delta = payload.get("delta", {})
-                                    if delta.get("type") == "text":
-                                        text_chunk = delta.get("text", "")
-                                        final_response += text_chunk
-                                elif event_type == "step_complete":
-                                    step_details = payload.get("step_details", {})
-                                    # Extract text from model_response
-                                    model_response = step_details.get("model_response", {})
-                                    if isinstance(model_response, dict):
-                                        content = model_response.get("content", "")
-                                        if content:
-                                            logger.info(f"Got model_response content: {len(str(content))} chars")
-                                            final_response += str(content)
-                                    # Also try legacy 'text' field for compatibility
-                                    text_chunk = step_details.get("text", "")
-                                    if text_chunk:
-                                        logger.info(f"Got text from step_complete: {len(text_chunk)} chars")
-                                        final_response += text_chunk
-
-                            # Get final response from turn_complete (according to LlamaStack docs)
-                            elif event_type == "turn_complete":
-                                turn_data = payload.get("turn", {})
-                                output_message = turn_data.get("output_message", {})
-                                content = output_message.get("content", "")
-                                if content and not final_response:
-                                    # Use turn_complete content if we didn't get it from streaming
-                                    final_response = str(content)
-                                    logger.info(f"Got response from turn_complete: {len(final_response)} chars")
+                                logger.info(f"Saved step to DB: {name}")
 
                         except json.JSONDecodeError:
                             continue
