@@ -4,41 +4,73 @@ apiVersion: llamastack.io/v1alpha1
 kind: LlamaStackDistribution
 metadata:
   annotations:
-    argocd.argoproj.io/sync-wave: "3" # after inferenceservice
+    argocd.argoproj.io/sync-wave: "3"
   labels:
     {{- include "agentic-claims-demo.labels" . | nindent 4 }}
   name: llamastack-rhoai
   namespace: {{ include "agentic-claims-demo.namespace" . }}
 spec:
-  # comes with a PVC/stick to single replica
-  # WARNING: llamastack operator keeps updating that deployment
   replicas: 1
   server:
     containerSpec:
       env:
-        {{- include "llamastack.env" . | nindent 8 }}
+        # Remote LLM configuration
+        - name: INFERENCE_MODEL
+          value: {{ include "llamastack.model" . | quote }}
+        - name: VLLM_URL
+          value: {{ include "llamastack.inferenceEndpoint" . | quote }}
+        - name: VLLM_TLS_VERIFY
+          value: "false"
+        - name: VLLM_API_TOKEN
+          value: "fake"
+        - name: VLLM_MAX_TOKENS
+          value: "16384"
+
+        # Remote embedding configuration
+        - name: EMBEDDING_MODEL
+          value: {{ include "llamastack.embeddingModel" . | quote }}
+        - name: EMBEDDING_PROVIDER_MODEL_ID
+          value: {{ include "llamastack.embeddingModel" . | quote }}
+        - name: VLLM_EMBEDDING_URL
+          value: {{ include "llamastack.embeddingEndpoint" . | quote }}
+        - name: VLLM_EMBEDDING_TLS_VERIFY
+          value: "false"
+        - name: VLLM_EMBEDDING_API_TOKEN
+          value: "fake"
+        - name: VLLM_EMBEDDING_MAX_TOKENS
+          value: "512"
+
+        # PostgreSQL and PGVector configuration
+        - name: POSTGRES_HOST
+          value: postgresql.{{ include "agentic-claims-demo.namespace" . }}.svc.cluster.local
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgresql.auth.existingSecret }}
+              key: LLAMASTACK_DATABASE
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgresql.auth.existingSecret }}
+              key: LLAMASTACK_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgresql.auth.existingSecret }}
+              key: LLAMASTACK_PASSWORD
+        - name: ENABLE_PGVECTOR
+          value: "true"
       name: llama-stack
       port: 8321
       resources:
         {{- toYaml .Values.llamastack.resources | nindent 8 }}
     distribution:
-      # why/what's this?!
       name: rh-dev
+    userConfig:
+      configMapName: llamastack-rhoai
     storage:
-      # checking CRD, we can't set a custom StorageClass here?
       size: 20Gi
-    # looking at CRD, there's that ...
-    podOverrides:
-      volumeMounts:
-        - mountPath: /opt/app-root/run.yaml
-          name: config
-          subPath: run.yaml
-      volumes:
-        - name: config
-          configMap:
-            name: llamastack-rhoai
-# but maybe that one's better?
-# => should try again ... wasted a day re-writing llamastack configuration, as format changes a lot, compared with initial material from demo
-#     userConfig:
-#       configMapName: llamastack-rhoai
+      mountPath: /opt/app-root/src/.llama/distributions/rh/
 {{- end }}

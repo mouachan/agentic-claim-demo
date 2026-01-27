@@ -91,3 +91,39 @@ llamastack-rhoai-{{ .Values.global.namespace }}
 {{- define "llamastack_route_prefix" -}}
 {{- include "llamastack_route_prefix_full" . | trunc 63 -}}
 {{- end -}}
+
+{{/* Helper for inference endpoint URL */}}
+{{- define "llamastack.inferenceEndpoint" -}}
+{{- if .Values.llamastack.model.endpoint -}}
+{{ .Values.llamastack.model.endpoint | replace "CLUSTER_DOMAIN" .Values.global.clusterDomain }}
+{{- else -}}
+{{- if eq (include "agentic-claims-demo.namespace" .) (include "inference.namespace" .) -}}
+http://llama-predictor/v1
+{{- else -}}
+https://llama-{{ include "inference.namespace" . }}.{{ .Values.global.clusterDomain }}/v1
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Helper for inference model name */}}
+{{- define "llamastack.model" -}}
+{{ .Values.inference.model.name }}
+{{- end -}}
+
+{{/* Helper for embedding endpoint URL */}}
+{{- define "llamastack.embeddingEndpoint" -}}
+{{- if .Values.llamastack.embedding.endpoint -}}
+{{ .Values.llamastack.embedding.endpoint | replace "CLUSTER_DOMAIN" .Values.global.clusterDomain }}
+{{- else -}}
+{{- if eq (include "agentic-claims-demo.namespace" .) (include "embedding.namespace" .) -}}
+http://gemma-predictor/v1
+{{- else -}}
+https://gemma-{{ include "embedding.namespace" . }}.{{ .Values.global.clusterDomain }}/v1
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Helper for embedding model name */}}
+{{- define "llamastack.embeddingModel" -}}
+{{ .Values.embedding.model.name }}
+{{- end -}}

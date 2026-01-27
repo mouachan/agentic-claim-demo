@@ -10,33 +10,32 @@ metadata:
     component: guardrails
 data:
   config.yaml: |
-    # Chat generation service configuration
+    # Chat generation service configuration (where to forward after detection)
+    # Note: chat_generation is deprecated but functional - will migrate to 'generation' format later
+    # No TLS field = HTTP connection to LlamaStack
     chat_generation:
       service:
-        # LlamaStack inference endpoint
+        # LlamaStack inference endpoint (HTTP)
         hostname: claims-llamastack-service.claims-demo.svc.cluster.local
         port: 8321
 
     # Detector configurations
     detectors:
-      # HAP (Hate and Profanity) detector - using built-in detector sidecar
-      hap:
+      # Contains word detector for testing (built-in detector sidecar)
+      contains_word:
         type: text_contents
         service:
-          # Built-in TrustyAI detectors are on port 8080
-          hostname: claims-guardrails-service.claims-demo.svc.cluster.local
+          # Built-in detector runs as sidecar on localhost
+          hostname: "127.0.0.1"
           port: 8080
         chunker_id: whole_doc_chunker
         default_threshold: 0.5
-        enabled: true
 
-      # PII (Personally Identifiable Information) detector - using built-in detector sidecar
-      pii:
+      # Over 100 characters detector
+      over_100_characters:
         type: text_contents
         service:
-          # Built-in TrustyAI detectors are on port 8080
-          hostname: claims-guardrails-service.claims-demo.svc.cluster.local
+          hostname: "127.0.0.1"
           port: 8080
         chunker_id: whole_doc_chunker
-        default_threshold: 0.7
-        enabled: true
+        default_threshold: 0.5

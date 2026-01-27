@@ -1,5 +1,5 @@
-{{- if and .Values.mcp.ocr.enabled (eq .Values.backend.pvc.accessMode "ReadWriteMany") }}
-# PVC needs to be shared in between backend deployment, and OCR
+{{- if .Values.mcp.ocr.enabled }}
+# PVC is shared between backend deployment and OCR
 ---
 apiVersion: apps/v1
 kind: Deployment

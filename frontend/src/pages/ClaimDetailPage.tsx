@@ -320,28 +320,28 @@ export default function ClaimDetailPage() {
       </div>
 
       {/* Processing Status */}
-      {logs.length > 0 && (
+      {(claim?.status === 'processing' || claim?.status === 'completed' || claim?.status === 'failed' || claim?.status === 'manual_review' || logs.length > 0 || (status && status.processing_steps && status.processing_steps.length > 0)) && (
         <div className="bg-white shadow rounded-lg p-6">
           <h3 className="text-xl font-bold text-gray-900 mb-4">Processing Steps</h3>
 
-          {status && status.current_step && (
+          {status && claim?.status === 'processing' && (
             <div className="mb-4 p-4 bg-blue-50 rounded-lg">
-              <p className="text-sm text-gray-600">Current Step</p>
-              <p className="text-lg font-medium text-gray-900">{status.current_step}</p>
+              <p className="text-sm text-gray-600">Overall Progress</p>
               <div className="mt-2">
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
                     className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${status.progress_percentage}%` }}
+                    style={{ width: `${status.progress_percentage || 0}%` }}
                   ></div>
                 </div>
-                <p className="text-sm text-gray-600 mt-1">{status.progress_percentage}% complete</p>
+                <p className="text-sm text-gray-600 mt-1">{status.progress_percentage || 0}% complete</p>
               </div>
             </div>
           )}
 
           <div className="space-y-4">
-            {logs.map((step: ProcessingStepLog, index: number) => (
+            {(status?.processing_steps && status.processing_steps.length > 0) ? (
+              status.processing_steps.map((step: ProcessingStepLog, index: number) => (
               <div key={index} className="border border-gray-200 rounded-lg p-4">
                 <div className="flex items-start">
                   <div className="flex-shrink-0 mt-1">
@@ -481,7 +481,18 @@ export default function ClaimDetailPage() {
                   </div>
                 </div>
               </div>
-            ))}
+            ))
+            ) : logs.length > 0 ? (
+              logs.map((step: ProcessingStepLog, index: number) => (
+              <div key={index} className="border border-gray-200 rounded-lg p-4">
+                <p className="text-sm text-gray-600">{step.step_name} - {step.status}</p>
+              </div>
+            ))
+            ) : (
+              <div className="p-4 bg-gray-50 rounded-lg text-center">
+                <p className="text-gray-600">Waiting for processing to start...</p>
+              </div>
+            )}
           </div>
         </div>
       )}
