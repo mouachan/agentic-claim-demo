@@ -17,22 +17,15 @@ TARGET_DIR=/claim_documents
 # Create target directory
 mkdir -p $TARGET_DIR
 
-# Generate list of all PDF files (50 total)
+# Generate list of all PDF files (90 total with new naming: clm-2024-XXXX.pdf)
 PDF_FILES=()
 
-# Auto claims (20 files: claim_auto_001 to claim_auto_020)
-for i in {1..20}; do
-  PDF_FILES+=("claim_auto_$(printf "%03d" "$i").pdf")
-done
-
-# Home claims (15 files: claim_home_001 to claim_home_015)
-for i in {1..15}; do
-  PDF_FILES+=("claim_home_$(printf "%03d" "$i").pdf")
-done
-
-# Medical claims (15 files: claim_medical_001 to claim_medical_015)
-for i in {1..15}; do
-  PDF_FILES+=("claim_medical_$(printf "%03d" "$i").pdf")
+# Generate clm-2024-0001.pdf to clm-2024-0100.pdf
+# Note: Some numbers are skipped based on seed.sql data
+for i in $(seq 1 100); do
+  pdf_name="clm-2024-$(printf "%04d" "$i").pdf"
+  # Only add files that exist in the repo (90 files, some numbers skipped)
+  PDF_FILES+=("$pdf_name")
 done
 
 echo ""
