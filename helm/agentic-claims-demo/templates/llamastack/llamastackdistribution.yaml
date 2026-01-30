@@ -4,7 +4,12 @@ apiVersion: llamastack.io/v1alpha1
 kind: LlamaStackDistribution
 metadata:
   annotations:
-    argocd.argoproj.io/sync-wave: "3"
+    # ArgoCD GitOps
+    argocd.argoproj.io/sync-wave: "10"
+    # Helm hooks
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
   labels:
     {{- include "agentic-claims-demo.labels" . | nindent 4 }}
   name: llamastack-rhoai
