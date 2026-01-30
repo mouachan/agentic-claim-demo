@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { claimsApi } from '../services/api'
 import type { Claim, ClaimStatusResponse, ClaimDecision, ProcessingStepLog } from '../types'
+import ReviewChatPanel from '../components/ReviewChatPanel'
 
 export default function ClaimDetailPage() {
   const { claimId } = useParams<{ claimId: string }>()
@@ -493,7 +494,122 @@ export default function ClaimDetailPage() {
                 <p className="text-gray-600">Waiting for processing to start...</p>
               </div>
             )}
+
+            {/* Q&A with Agent (from agent_logs) */}
+            {claim?.agent_logs && claim.agent_logs.length > 0 && (
+              <div className="mt-6 border-t pt-6">
+                <h4 className="text-lg font-bold text-gray-900 mb-4">💬 Reviewer-Agent Conversation</h4>
+                <div className="space-y-3">
+                  {claim.agent_logs.map((log, index) => {
+                    if (log.type === 'reviewer_question') {
+                      // Find the corresponding answer (next log entry should be agent_answer)
+                      const answerLog = claim.agent_logs?.[index + 1]
+                      const hasAnswer = answerLog && answerLog.type === 'agent_answer'
+
+                      return (
+                        <div key={index} className="ml-4">
+                          {/* Question */}
+                          <div className="p-3 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                            <div className="text-xs text-gray-500">
+                              <strong>{log.reviewer_name || 'Reviewer'}</strong> · {new Date(log.timestamp).toLocaleString()}
+                            </div>
+                            <div className="mt-1 font-semibold text-blue-900">
+                              💬 {log.message}
+                            </div>
+                          </div>
+                          {/* Answer */}
+                          {hasAnswer && (
+                            <div className="p-3 bg-purple-50 rounded-lg border-l-4 border-purple-500 mt-2 ml-4">
+                              <div className="text-xs text-purple-700 font-semibold mb-1">
+                                🤖 Agent Response
+                              </div>
+                              <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                                {answerLog.message}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-2">
+                                {new Date(answerLog.timestamp).toLocaleString()}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    }
+
+                    if (log.type === 'approve') {
+                      return (
+                        <div key={index} className="p-3 bg-green-50 rounded-lg border-l-4 border-green-500">
+                          <div className="text-xs text-gray-500">
+                            <strong>{log.reviewer_name || 'Reviewer'}</strong> · {new Date(log.timestamp).toLocaleString()}
+                          </div>
+                          <div className="mt-1 font-semibold text-green-700">
+                            ✅ APPROVED
+                          </div>
+                          {log.message && (
+                            <div className="mt-1 text-sm text-gray-700">{log.message}</div>
+                          )}
+                        </div>
+                      )
+                    }
+
+                    if (log.type === 'reject') {
+                      return (
+                        <div key={index} className="p-3 bg-red-50 rounded-lg border-l-4 border-red-500">
+                          <div className="text-xs text-gray-500">
+                            <strong>{log.reviewer_name || 'Reviewer'}</strong> · {new Date(log.timestamp).toLocaleString()}
+                          </div>
+                          <div className="mt-1 font-semibold text-red-700">
+                            ❌ REJECTED
+                          </div>
+                          {log.message && (
+                            <div className="mt-1 text-sm text-gray-700">{log.message}</div>
+                          )}
+                        </div>
+                      )
+                    }
+
+                    if (log.type === 'request_info') {
+                      return (
+                        <div key={index} className="p-3 bg-yellow-50 rounded-lg border-l-4 border-yellow-500">
+                          <div className="text-xs text-gray-500">
+                            <strong>{log.reviewer_name || 'Reviewer'}</strong> · {new Date(log.timestamp).toLocaleString()}
+                          </div>
+                          <div className="mt-1 font-semibold text-yellow-700">
+                            ℹ️ REQUESTED MORE INFO
+                          </div>
+                          {log.message && (
+                            <div className="mt-1 text-sm text-gray-700">{log.message}</div>
+                          )}
+                        </div>
+                      )
+                    }
+
+                    // Skip agent_answer as it's displayed with the question
+                    if (log.type === 'agent_answer') {
+                      return null
+                    }
+
+                    return null
+                  })}
+                </div>
+              </div>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* Human-in-the-Loop Review Panel */}
+      {claim?.status === 'manual_review' && (
+        <div className="bg-white shadow rounded-lg p-6">
+          <ReviewChatPanel
+            claimId={claim.id}
+            reviewerId={`reviewer_${Date.now()}`}
+            reviewerName="Review Agent"
+            onActionSubmitted={(action) => {
+              console.log('Action submitted:', action)
+              // Reload claim data after action
+              loadClaimData()
+            }}
+          />
         </div>
       )}
 
@@ -502,37 +618,83 @@ export default function ClaimDetailPage() {
         <div className="bg-white shadow rounded-lg p-6">
           <h3 className="text-xl font-bold text-gray-900 mb-4">Claim Decision</h3>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <p className="text-sm text-gray-600">Decision</p>
-              <p className={`text-2xl font-bold mt-1 ${
-                decision.decision === 'approve' ? 'text-green-600' :
-                decision.decision === 'deny' ? 'text-red-600' :
+          {/* Decision History: System + Reviewer */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            {/* Initial System Decision */}
+            <div className="border border-gray-200 rounded-lg p-4">
+              <p className="text-sm font-medium text-gray-500 mb-2">🤖 System Decision (Initial)</p>
+              <p className={`text-3xl font-bold ${
+                decision.initial_decision === 'approve' ? 'text-green-600' :
+                decision.initial_decision === 'deny' ? 'text-red-600' :
                 'text-orange-600'
               }`}>
-                {decision.decision.toUpperCase()}
+                {decision.initial_decision?.toUpperCase() || 'N/A'}
               </p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Confidence</p>
-              <p className="text-2xl font-bold mt-1 text-gray-900">
-                {(decision.confidence * 100).toFixed(1)}%
-              </p>
-            </div>
-            {decision.relevant_policies?.estimated_coverage && (
-              <div>
-                <p className="text-sm text-gray-600">Estimated Coverage</p>
-                <p className="text-2xl font-bold mt-1 text-blue-600">
-                  ${Number(decision.relevant_policies.estimated_coverage).toLocaleString()}
+              {decision.initial_confidence !== undefined && decision.initial_confidence !== null && (
+                <p className="text-sm text-gray-600 mt-2">
+                  Confidence: <span className="font-medium">{(decision.initial_confidence * 100).toFixed(1)}%</span>
                 </p>
-              </div>
-            )}
+              )}
+              {decision.initial_decided_at && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {formatDate(decision.initial_decided_at)}
+                </p>
+              )}
+            </div>
+
+            {/* Final Reviewer Decision */}
+            <div className={`border-2 rounded-lg p-4 ${
+              decision.final_decision
+                ? (decision.final_decision === 'approve' ? 'border-green-500 bg-green-50' : 'border-red-500 bg-red-50')
+                : 'border-gray-300 bg-gray-50'
+            }`}>
+              <p className="text-sm font-medium text-gray-700 mb-2">👤 Final Decision (Reviewer)</p>
+              {decision.final_decision ? (
+                <>
+                  <p className={`text-3xl font-bold ${
+                    decision.final_decision === 'approve' ? 'text-green-700' :
+                    decision.final_decision === 'deny' ? 'text-red-700' :
+                    'text-orange-700'
+                  }`}>
+                    {decision.final_decision.toUpperCase()}
+                  </p>
+                  {decision.final_decision_by_name && (
+                    <p className="text-sm text-gray-700 mt-2">
+                      By: <span className="font-medium">{decision.final_decision_by_name}</span>
+                    </p>
+                  )}
+                  {decision.final_decision_at && (
+                    <p className="text-xs text-gray-600 mt-1">
+                      {formatDate(decision.final_decision_at)}
+                    </p>
+                  )}
+                  {decision.final_decision_notes && (
+                    <p className="text-xs text-gray-700 mt-2 italic">
+                      "{decision.final_decision_notes}"
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-lg text-gray-500 italic">Pending review...</p>
+              )}
+            </div>
           </div>
 
+          {/* Estimated Coverage */}
+          {decision.relevant_policies?.estimated_coverage && (
+            <div className="mb-6">
+              <p className="text-sm text-gray-600">Estimated Coverage</p>
+              <p className="text-2xl font-bold mt-1 text-blue-600">
+                ${Number(decision.relevant_policies.estimated_coverage).toLocaleString()}
+              </p>
+            </div>
+          )}
+
+          {/* Initial Reasoning */}
           <div className="mt-6">
-            <p className="text-sm text-gray-600 mb-2">Reasoning</p>
+            <p className="text-sm text-gray-600 mb-2">System Reasoning</p>
             <div className="p-4 bg-gray-50 rounded-lg">
-              <p className="text-gray-900">{decision.reasoning}</p>
+              <p className="text-gray-900">{decision.initial_reasoning || decision.reasoning || 'N/A'}</p>
             </div>
           </div>
 

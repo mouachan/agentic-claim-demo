@@ -53,6 +53,7 @@ class ClaimStatus(str, enum.Enum):
     completed = "completed"
     failed = "failed"
     manual_review = "manual_review"
+    pending_info = "pending_info"  # Waiting for additional information from claimant
 
 
 class ProcessingStep(str, enum.Enum):
@@ -94,7 +95,9 @@ class Claim(Base):
     submitted_at = Column(DateTime(timezone=True), default=utc_now, index=True)
     processed_at = Column(DateTime(timezone=True))
     total_processing_time_ms = Column(Integer)
+    is_archived = Column(Boolean, default=False, nullable=False, index=True)
     claim_metadata = Column("metadata", JSON, default=dict)
+    agent_logs = Column(JSON, default=list)  # HITL review logs and chat messages
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -246,7 +249,7 @@ class GuardrailsDetection(Base):
 
 
 class ClaimDecision(Base):
-    """Claim processing decision."""
+    """Claim processing decision with history of system and reviewer decisions."""
 
     __tablename__ = "claim_decisions"
 
@@ -255,7 +258,20 @@ class ClaimDecision(Base):
         PG_UUID(as_uuid=True), ForeignKey("claims.id"), nullable=False, index=True
     )
 
-    # Decision
+    # Initial System Decision (automated)
+    initial_decision = Column(Enum(DecisionType, native_enum=False), nullable=False, index=True)
+    initial_confidence = Column(Float)
+    initial_reasoning = Column(Text)
+    initial_decided_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+
+    # Final Reviewer Decision (manual override)
+    final_decision = Column(Enum(DecisionType, native_enum=False), index=True)
+    final_decision_by = Column(String(255))  # Reviewer ID
+    final_decision_by_name = Column(String(255))  # Reviewer name
+    final_decision_at = Column(DateTime(timezone=True))
+    final_decision_notes = Column(Text)
+
+    # Legacy field for backwards compatibility (maps to initial_decision)
     decision = Column(Enum(DecisionType, native_enum=False), nullable=False, index=True)
     confidence = Column(Float)
     reasoning = Column(Text)

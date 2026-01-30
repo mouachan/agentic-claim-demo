@@ -41,6 +41,7 @@ from app.llamastack.prompts import (
     AGENT_CONFIG,
     format_prompt
 )
+from app.api.hitl import notify_manual_review_required
 
 logger = logging.getLogger(__name__)
 
@@ -141,11 +142,16 @@ async def list_claims(
     page_size: int = Query(default=20, ge=1, le=100),
     status: Optional[str] = Query(default=None),
     user_id: Optional[str] = Query(default=None),
+    include_archived: bool = Query(default=False),
     db: AsyncSession = Depends(get_db)
 ):
     """List claims with pagination and optional filtering."""
     try:
         query = select(models.Claim)
+
+        # Filter out archived claims by default
+        if not include_archived:
+            query = query.where(models.Claim.is_archived == False)
 
         if status:
             query = query.where(models.Claim.status == status)
@@ -505,12 +511,19 @@ async def process_claim(
                 claim.total_processing_time_ms = processing_time_ms
                 claim.processed_at = datetime.now(timezone.utc)
 
-                # Create decision record
+                # Create decision record with initial system decision
                 decision = models.ClaimDecision(
                     claim_id=claim_id,
+                    # Initial system decision fields
+                    initial_decision=recommendation,
+                    initial_confidence=decision_data.get("confidence", 0.0),
+                    initial_reasoning=decision_data.get("reasoning", ""),
+                    initial_decided_at=datetime.now(timezone.utc),
+                    # Legacy fields for backwards compatibility
                     decision=recommendation,
                     confidence=decision_data.get("confidence", 0.0),
                     reasoning=decision_data.get("reasoning", ""),
+                    # Supporting evidence
                     relevant_policies={
                         "policies": decision_data.get("relevant_policies", []),
                         "estimated_coverage": decision_data.get("estimated_coverage_amount")
@@ -522,6 +535,11 @@ async def process_claim(
                 await db.commit()
 
                 logger.info(f"Claim {claim_id} processed: {recommendation}")
+
+                # Notify reviewers via WebSocket if manual review is required
+                if recommendation == "manual_review":
+                    reasoning = decision_data.get("reasoning", "Agent could not make automated decision")
+                    await notify_manual_review_required(claim_id, reasoning)
 
                 return schemas.ProcessClaimResponse(
                     claim_id=claim_id,
@@ -724,9 +742,22 @@ async def get_claim_decision(
         return schemas.ClaimDecisionResponse(
             id=decision.id,
             claim_id=decision.claim_id,
-            decision=decision.decision,
+            # Initial system decision
+            initial_decision=decision.initial_decision.value,
+            initial_confidence=decision.initial_confidence,
+            initial_reasoning=decision.initial_reasoning,
+            initial_decided_at=decision.initial_decided_at,
+            # Final reviewer decision
+            final_decision=decision.final_decision.value if decision.final_decision else None,
+            final_decision_by=decision.final_decision_by,
+            final_decision_by_name=decision.final_decision_by_name,
+            final_decision_at=decision.final_decision_at,
+            final_decision_notes=decision.final_decision_notes,
+            # Legacy fields for backwards compatibility
+            decision=decision.decision.value,
             confidence=decision.confidence,
             reasoning=decision.reasoning,
+            # Supporting data
             relevant_policies=decision.relevant_policies,
             similar_claims=decision.similar_claims,
             user_contract_info=decision.user_contract_info,

@@ -114,7 +114,7 @@ async def readiness():
 # Import and Include API Routers
 # =============================================================================
 
-from app.api import claims, documents
+from app.api import claims, documents, hitl
 
 app.include_router(
     claims.router,
@@ -125,6 +125,11 @@ app.include_router(
     documents.router,
     prefix=f"{settings.api_v1_prefix}/documents",
     tags=["documents"]
+)
+app.include_router(
+    hitl.router,
+    prefix=f"{settings.api_v1_prefix}/review",
+    tags=["review"]
 )
 
 

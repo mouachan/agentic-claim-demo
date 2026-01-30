@@ -54,12 +54,29 @@ async def health_check(request):
         "ocr_ready": _ocr_reader is not None
     })
 
+
+# OPTIONS endpoint for MCP discovery (required by LlamaStack)
+async def sse_options(request):
+    """Handle OPTIONS requests for MCP SSE endpoint discovery"""
+    return JSONResponse({
+        "methods": ["GET", "POST", "OPTIONS"],
+        "mcp_version": "0.1.0",
+        "server_name": "ocr-server",
+        "capabilities": {
+            "tools": True,
+            "streaming": True
+        }
+    })
+
+
 # Create wrapper app with health check and MCP SSE server
 mcp_sse_app = mcp.sse_app()
 
 app = Starlette(
     routes=[
         Route("/health", health_check),
+        Route("/sse", sse_options, methods=["OPTIONS"]),
+        Route("/", sse_options, methods=["OPTIONS"]),
         Mount("/", app=mcp_sse_app),
     ]
 )

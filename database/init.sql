@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Create enum types
-CREATE TYPE claim_status AS ENUM ('pending', 'processing', 'completed', 'failed', 'manual_review');
+CREATE TYPE claim_status AS ENUM ('pending', 'processing', 'completed', 'failed', 'manual_review', 'pending_info');
 CREATE TYPE processing_step AS ENUM ('ocr', 'guardrails', 'rag_retrieval', 'llm_decision', 'final_review');
 CREATE TYPE decision_type AS ENUM ('approve', 'deny', 'manual_review');
 
@@ -28,7 +28,9 @@ CREATE TABLE claims (
     submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     processed_at TIMESTAMP,
     total_processing_time_ms INTEGER,
+    is_archived BOOLEAN DEFAULT FALSE NOT NULL,
     metadata JSONB DEFAULT '{}',
+    agent_logs JSONB DEFAULT '[]',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -36,6 +38,7 @@ CREATE TABLE claims (
 CREATE INDEX idx_claims_user_id ON claims(user_id);
 CREATE INDEX idx_claims_status ON claims(status);
 CREATE INDEX idx_claims_submitted_at ON claims(submitted_at);
+CREATE INDEX idx_claims_is_archived ON claims(is_archived);
 CREATE INDEX idx_claims_metadata ON claims USING GIN(metadata);
 
 -- ============================================================================
@@ -167,13 +170,26 @@ CREATE INDEX idx_guardrails_detection_type ON guardrails_detections(detection_ty
 CREATE INDEX idx_guardrails_severity ON guardrails_detections(severity);
 
 -- ============================================================================
--- CLAIM DECISIONS TABLE
+-- CLAIM DECISIONS TABLE (with system and reviewer decision history)
 -- ============================================================================
 CREATE TABLE claim_decisions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     claim_id UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
 
-    -- Decision
+    -- Initial System Decision (automated)
+    initial_decision decision_type NOT NULL,
+    initial_confidence FLOAT,
+    initial_reasoning TEXT,
+    initial_decided_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Final Reviewer Decision (manual override)
+    final_decision decision_type,
+    final_decision_by VARCHAR(255),
+    final_decision_by_name VARCHAR(255),
+    final_decision_at TIMESTAMP,
+    final_decision_notes TEXT,
+
+    -- Legacy fields for backwards compatibility
     decision decision_type NOT NULL,
     confidence FLOAT,
     reasoning TEXT,
@@ -201,6 +217,8 @@ CREATE TABLE claim_decisions (
 
 CREATE INDEX idx_claim_decisions_claim_id ON claim_decisions(claim_id);
 CREATE INDEX idx_claim_decisions_decision ON claim_decisions(decision);
+CREATE INDEX idx_claim_decisions_initial_decision ON claim_decisions(initial_decision);
+CREATE INDEX idx_claim_decisions_final_decision ON claim_decisions(final_decision);
 CREATE INDEX idx_claim_decisions_decided_at ON claim_decisions(decided_at);
 
 -- ============================================================================
@@ -358,4 +376,6 @@ $$ LANGUAGE plpgsql;
 -- ============================================================================
 -- COMPLETION
 -- ============================================================================
-COMMENT ON DATABASE claims_db IS 'Claims Processing Demo Database with pgvector for RAG';
+-- not sure why current_database() shows as a syntax error... looks legit AFAIU
+-- no big deal, can do without
+-- COMMENT ON DATABASE current_database() IS 'Claims Processing Demo Database with pgvector for RAG';

@@ -1,980 +1,750 @@
 # Agentic Insurance Claims Processing Demo
 
-An intelligent insurance claims processing system powered by AI agents, demonstrating advanced document processing, policy retrieval, and automated decision-making capabilities using Model Context Protocol (MCP) and LlamaStack.
+An intelligent insurance claims processing system powered by AI agents, demonstrating advanced document processing, policy retrieval, and automated decision-making capabilities using Model Context Protocol (MCP) and LlamaStack on Red Hat OpenShift AI.
 
-## Key URLs
+## 📋 Table of Contents
 
-**Deployed Application** (replace `CLUSTER_DOMAIN` with your OpenShift cluster domain):
-- Frontend: `https://frontend-claims-demo.apps.CLUSTER_DOMAIN`
-- Backend API: `https://backend-claims-demo.apps.CLUSTER_DOMAIN/api/v1/claims/`
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Quick Start (Helm)](#quick-start-helm)
+- [Configuration](#configuration)
+- [Advanced Topics](#advanced-topics)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [API Reference](#api-reference)
 
-## Model Configuration
+## Overview
 
-The system uses the following AI models from OpenShift AI:
+### What is this?
 
-- **Primary LLM**: Llama 3.3 70B INT8 (vLLM, 20K context, 4 GPUs tensor parallel)
-  - Endpoint: `https://llama-3-3-70b-llama-3-3-70b.apps.CLUSTER_DOMAIN/v1`
-- **Embeddings**: Gemma 300M (768-dim vectors)
-  - Endpoint: `https://embeddinggemma-300m-edg-demo.apps.CLUSTER_DOMAIN/v1`
-- **Vector Store**: PostgreSQL with pgvector backend
-- **Configured in**: `openshift/configmaps/llamastack-config.yaml`
+This demo showcases an end-to-end agentic workflow for insurance claims processing:
 
-### RAG Architecture Clarification: Builtin vs Custom
+1. **Document Processing**: Extract structured data from claim documents (PDFs, images) using OCR
+2. **Policy Retrieval**: Semantic search through user contracts and historical claims using RAG (Retrieval-Augmented Generation)
+3. **Intelligent Decision-Making**: ReActAgent (Reasoning + Acting) orchestration for multi-step reasoning with automated claim approval/denial
 
-⚠️ **The system currently has TWO RAG implementations** (redundant):
+### Key Features
 
-1. **`builtin::rag`** - LlamaStack's native RAG runtime
-   - Provider: `inline::rag-runtime` (built into LlamaStack)
-   - Directly queries pgvector database
-   - Simpler but less customizable
+- ✅ **Agentic Workflow**: LlamaStack ReActAgent with thought-action-observation loops
+- 🔧 **MCP Tools**: Custom OCR and RAG servers using Model Context Protocol
+- 🤖 **AI Models**: Llama 3.3 70B (reasoning) + Gemma 300M (embeddings)
+- 📄 **OCR**: Fast document processing (2-4s per document) with EasyOCR
+- 🔍 **RAG**: Vector similarity search with PostgreSQL pgvector
+- 🛡️ **Guardrails**: Optional PII detection and content safety
+- 🚀 **Production-Ready**: Helm deployment with MinIO + Data Science Pipelines
 
-2. **`mcp::rag-server`** - Custom MCP server
-   - Provider: `remote::model-context-protocol`
-   - Python FastAPI server with custom logic
-   - More flexible, allows custom filtering and synthesis
+## Architecture
 
-**Recommendation**: Use **only ONE** approach. The custom MCP server provides more control for complex business logic.
-
-## Architecture Overview
-
-This demo showcases an end-to-end agentic workflow for insurance claims processing using OpenShift AI and LlamaStack.
-
-### System Architecture
+### System Components
 
 ```mermaid
 graph TB
     subgraph "User Layer"
-        U[👤 User Browser]
+        U[👤 Browser]
     end
 
     subgraph "OpenShift Cluster"
-        subgraph "Application Layer - Namespace: claims-demo"
-            F[📱 Frontend<br/>React + TypeScript<br/>Route/Service]
-            B[⚙️ Backend API<br/>FastAPI + ReActAgent<br/>Route/Service]
+        subgraph "Application - Namespace: claims-demo"
+            F[📱 Frontend React]
+            B[⚙️ Backend FastAPI]
         end
 
-        subgraph "OpenShift AI 3.0 - AI Services"
-            subgraph "LlamaStack - Operator Managed"
-                LS[🧠 LlamaStack<br/>ReActAgent Runtime<br/>Service: claims-llamastack-service:8321<br/>Deployed via LlamaStackDistribution CRD]
+        subgraph "OpenShift AI 3.2 - AI Platform"
+            subgraph "LlamaStack"
+                LS[🧠 LlamaStack<br/>ReActAgent Runtime]
             end
 
-            subgraph "AI Models - InferenceServices"
-                LLM["🦙 Llama 3.3 70B INT8<br/>vLLM (4x L40 GPUs)<br/>Context: 20K tokens<br/>Tensor Parallel<br/>Namespace: llama-3-3-70b"]
-                EMB["🔢 Gemma 300M<br/>Embeddings (768-dim)<br/>HuggingFace Runtime<br/>Namespace: edg-demo"]
+            subgraph "AI Models"
+                LLM["🦙 Llama 3.3 70B<br/>vLLM 4xGPU<br/>20K context"]
+                EMB["🔢 Gemma 300M<br/>Embeddings 768-dim"]
             end
 
-            subgraph "TrustyAI Guardrails"
-                LG["🛡️ Llama Guard 3 1B<br/>Content Safety"]
-                GG["🛡️ Granite Guardian 3.1 2B<br/>PII Detection"]
+            subgraph "Data Science Pipelines"
+                DSPA["📊 DSPA<br/>Kubeflow Pipelines v2"]
+                MINIO["💾 MinIO<br/>S3-compatible storage"]
             end
         end
 
-        subgraph "MCP Servers - Namespace: claims-demo"
-            OCR["📄 OCR MCP Server<br/>EasyOCR Embedded (2-4s)<br/>Service: ocr-server:8080"]
-            RAG["🔍 RAG MCP Server Custom<br/>Advanced Vector Retrieval<br/>Service: rag-server:8080"]
-            RAGBUILTIN["🔍 Builtin RAG Runtime<br/>LlamaStack Native<br/>inline::rag-runtime"]
+        subgraph "MCP Servers - claims-demo"
+            OCR["📄 OCR MCP Server<br/>EasyOCR 2-4s"]
+            RAG["🔍 RAG MCP Server<br/>Vector Retrieval"]
         end
 
-        subgraph "Data Layer - Namespace: claims-demo"
-            DB[(🗄️ PostgreSQL + pgvector<br/>Claims + Embeddings<br/>StatefulSet + PVC)]
+        subgraph "Data Layer - claims-demo"
+            DB[(🗄️ PostgreSQL + pgvector)]
         end
     end
 
-    %% User connections
     U -->|HTTPS| F
-    F -->|REST API| B
-
-    %% Backend to LlamaStack
+    F -->|REST| B
     B -->|Agent API| LS
-
-    %% LlamaStack to Models
     LS -->|Inference| LLM
-    LS -->|Embeddings API| EMB
-    LS -->|MCP Protocol SSE| OCR
-    LS -->|MCP Protocol SSE| RAG
-    LS -.->|Optional Safety| LG
-    LS -.->|Optional PII Check| GG
+    LS -->|Embeddings| EMB
+    LS -->|MCP/SSE| OCR
+    LS -->|MCP/SSE| RAG
+    RAG -->|Vector Search| DB
+    B -->|CRUD| DB
+    DSPA -->|Artifacts| MINIO
 
-    %% LlamaStack Builtin RAG (inline runtime)
-    LS -->|Builtin RAG Runtime| RAGBUILTIN
-    RAGBUILTIN -->|Direct pgvector Query| DB
-
-    %% MCP Servers to AI Models
-    OCR -->|LLM Validation| LLM
-    RAG -->|Embeddings via LS API| EMB
-
-    %% Note: EasyOCR runs embedded in OCR server (no external model call)
-    %% Note: RAG server calls LlamaStack Embeddings API which uses Gemma 300m
-
-    %% MCP Servers to Data
-    RAG -->|Custom Vector Search| DB
-    OCR -.->|Store Results| DB
-
-    %% Backend to Data
-    B -->|CRUD Operations| DB
-
-    style U fill:#e1f5ff
-    style F fill:#fff4e6
-    style B fill:#ffe6f0
     style LS fill:#f3e5f5
     style LLM fill:#e8f5e9
-    style EMB fill:#e1f5e1
-    style LG fill:#fff9c4
-    style GG fill:#fff9c4
-    style OCR fill:#e3f2fd
-    style RAG fill:#e3f2fd
-    style RAGBUILTIN fill:#ffeaa7
-    style DB fill:#fce4ec
+    style DSPA fill:#e3f2fd
+    style MINIO fill:#fff3e0
 ```
 
-### Key Technologies
+### Technology Stack
 
-- **Frontend**: React with TypeScript
-- **Backend**: Python FastAPI
-- **AI Orchestration**: LlamaStack (deployed via OpenShift AI operator) with ReActAgent (Reasoning + Acting)
-- **AI Models** (from OpenShift AI):
-  - **Primary LLM**: Llama 3.3 70B INT8 (vLLM inference, 4 GPUs tensor parallel, 20K context)
-  - **Embeddings Model**: Gemma 300M (HuggingFace runtime, 768-dim vectors for RAG)
-  - **OCR Engine**: EasyOCR (embedded library, fast text extraction)
-  - **Guardrails**:
-    - Llama Guard 3 1B (content safety detection)
-    - Granite Guardian 3.1 2B (HAP, PII detection)
+**AI & ML**:
+- **LlamaStack 0.3.5**: AI orchestration with ReActAgent
+- **Llama 3.3 70B INT8**: Primary LLM (vLLM, 4 GPUs tensor parallel, 20K context)
+- **Gemma 300M**: Embeddings model (768-dim vectors)
+- **EasyOCR**: Fast OCR engine (2-4s per document)
+- **PostgreSQL pgvector**: Vector similarity search
+
+**Application**:
+- **Backend**: Python 3.12 + FastAPI
+- **Frontend**: React 18 + TypeScript
 - **MCP Protocol**: Model Context Protocol for tool integration
-- **Database**: PostgreSQL with pgvector extension
-- **Platform**: Red Hat OpenShift AI 3.0
 
-## Features
+**Platform**:
+- **Red Hat OpenShift AI 3.2**: AI platform and operators
+- **Kubeflow Pipelines v2**: Data Science Pipelines (DSPA)
+- **MinIO**: S3-compatible object storage
+- **Helm 3.x**: Package management
 
-### 1. Document Processing (OCR MCP Server)
-- **OCR Engine**: EasyOCR (embedded library, 80+ languages support)
-- **Performance**: 2-4 seconds per document (fast enough to avoid LlamaStack timeout)
-- Automated text extraction from claim documents (PDF, images)
-- Multi-format support: PDF, JPG, PNG, TIFF
-- Structured data extraction with confidence scores
-- LLM validation for accuracy
+## Prerequisites
 
-#### 📝 Architecture Decision: Why EasyOCR instead of Qwen-VL?
+### Required
 
-**Previous Implementation (Qwen-VL 7B):**
-- Large multimodal vision-language model (7 billion parameters)
-- Required dedicated GPU deployment via InferenceService
-- Processing time: 30+ seconds per document
-- **Problem**: Exceeded LlamaStack's 30-second MCP tool timeout → systematic failures
+1. **OpenShift 4.14+** cluster with:
+   - GPU nodes for AI models (4x L40 or equivalent for Llama 70B)
+   - Dynamic storage provisioning
 
-**Current Implementation (EasyOCR):**
-- Lightweight embedded library (no external service)
-- Processing time: 2-4 seconds per document
-- Runs inside the OCR MCP server pod
-- Can use GPU if available (optional)
-- Specialized for OCR → better accuracy for text extraction
+2. **Red Hat OpenShift AI 3.2**:
+   - Operator installed and running
+   - ServingRuntime for vLLM configured
+   - LlamaStack operator enabled
 
-**Trade-offs:**
-- ✅ **10x faster** processing (no timeout issues)
-- ✅ **Simpler architecture** (no separate InferenceService)
-- ✅ **Lower resource usage** (optional GPU, smaller footprint)
-- ⚠️ Less "intelligent" than multimodal LLM (but validated by LLM post-processing)
+3. **Helm 3.x**:
+   ```bash
+   helm version
+   ```
 
-**Note**: Qwen-VL deployment instructions are preserved in [`openshift/qwen-vl-7b/README.md`](openshift/qwen-vl-7b/README.md) for reference. If you need advanced vision understanding beyond OCR, you can still deploy it separately.
+4. **oc CLI**:
+   ```bash
+   oc version
+   ```
 
-### 2. Policy Retrieval (RAG MCP Server)
-- Vector similarity search for user contracts
-- PostgreSQL + pgvector for efficient retrieval
-- Contextual policy information extraction
-- Historical claims precedent analysis
+### Accounts & Tokens
 
-### 3. Intelligent Decision Making
-- ReActAgent orchestration with thought-action-observation loops
-- Multi-step reasoning with tool usage
-- Automated claim approval/denial recommendations
-- Detailed reasoning with policy citations
+- **HuggingFace token** (for model downloads): https://huggingface.co/settings/tokens
+- **Container registry** credentials (Quay.io, Docker Hub, or internal registry)
 
-### 4. Guardrails & Safety
-- PII detection and data protection
-- LLM-based content validation
-- Configurable safety rules
+### Optional
 
-## Agent Workflow
+- **GitOps** (ArgoCD/Flux) for automated deployments
+- **GPU Operator** if not pre-installed
 
-The system uses a **ReActAgent** (Reasoning and Acting) pattern:
+## Quick Start (Helm)
 
-```
-1. User submits insurance claim with document
-   ↓
-2. Agent analyzes the task
-   → THOUGHT: "I need to extract information from the document"
-   → ACTION: Call OCR MCP tool
-   → OBSERVATION: Structured claim data extracted
-   ↓
-3. Agent continues reasoning
-   → THOUGHT: "I need to check user's insurance coverage"
-   → ACTION: Call RAG MCP tool to retrieve contracts
-   → OBSERVATION: User's active policies and coverage details
-   ↓
-4. Agent makes final decision
-   → THOUGHT: "Based on policy X, section Y, this claim is covered"
-   → FINAL ANSWER: Approve with reasoning and estimated coverage
-```
+### 1. Build and Push Images
 
-## MCP Servers
-
-### MCP Protocol Implementation (JSON-RPC 2.0)
-
-Both OCR and RAG servers implement the **Model Context Protocol (MCP)** using JSON-RPC 2.0 over Server-Sent Events (SSE).
-
-**Protocol Flow**:
-1. **Client connects** to `/sse` endpoint → Receives unique session endpoint URL
-2. **Client POSTs** JSON-RPC messages to `/sse/message?session_id=<id>`
-3. **Server processes** message and queues response
-4. **Server sends** response via SSE stream
-
-**Supported JSON-RPC Methods**:
-- `initialize` → Returns server info and capabilities
-- `tools/list` → Returns available MCP tools
-- `tools/call` → Executes a tool with parameters
-- `ping` → Keep-alive heartbeat
-- `notifications/initialized` → Client ready signal (no response)
-
-**Session Management**: Each SSE connection gets a unique session with 30-second keep-alive.
-
-### OCR Server
-**Endpoint**: `http://ocr-server.claims-demo.svc.cluster.local:8080/sse`
-
-**Tools**:
-- `ocr_document`: Extract text and structured data from claim documents
-  - Supports multiple document types (claim forms, invoices, medical records, ID cards)
-  - Multi-language OCR support
-  - LLM validation for accuracy
-
-**Health Endpoints**:
-- `GET /health/live` → Liveness probe
-- `GET /health/ready` → Readiness probe (checks LlamaStack connectivity)
-
-### RAG Server
-**Endpoint**: `http://rag-server.claims-demo.svc.cluster.local:8080/sse`
-
-**Tools**:
-- `retrieve_user_info`: Get user profile and insurance contracts
-- `retrieve_similar_claims`: Find historical claims for precedent
-- `search_knowledge_base`: Query policy information and guidelines
-
-**Vector Database**: PostgreSQL with pgvector extension for semantic search
-
-**Health Endpoints**:
-- `GET /health/live` → Liveness probe
-- `GET /health/ready` → Readiness probe (checks LlamaStack connectivity)
-
-### Guardrails Server
-**Endpoint**: `http://claims-guardrails.claims-demo.svc.cluster.local:8080`
-
-**Features**:
-- PII detection (SSN, credit cards, emails, phone numbers)
-- Sensitive data filtering
-- LLM-based validation for context-aware protection
-
-## Deployment
-
-> **⚠️ Important: Namespace and Cluster Configuration**
->
-> This deployment is configured for the **`claims-demo`** namespace. The following files contain hardcoded references:
->
-> **Namespace (`claims-demo`):**
-> - `openshift/configmaps/backend-config.yaml` - All service endpoints
-> - `openshift/deployments/rag-server-deployment.yaml` - LlamaStack and PostgreSQL endpoints
-> - `openshift/deployments/frontend-deployment.yaml` - Backend service URL
->
-> **Cluster Domain (`CLUSTER_DOMAIN` placeholder):**
-> - `openshift/configmaps/llamastack-config.yaml` - Model inference endpoints (lines 37, 45)
->   - Must replace `CLUSTER_DOMAIN` with your actual OpenShift cluster domain
->   - Example: `apps.cluster-abc123.sandbox.opentlc.com`
->
-> **To deploy to a different namespace or cluster**, manually edit these files before applying the manifests.
-
-### Prerequisites
-- Red Hat OpenShift AI 3.0
-- OpenShift cluster with GPU nodes (for vLLM)
-- PostgreSQL with pgvector extension
-
-### OpenShift Resources
-
-The deployment uses OpenShift AI native resources and standard Kubernetes components:
-
-- **LlamaStack**: Deployed via **LlamaStackDistribution CRD** (managed by OpenShift AI operator)
-  - Automatically creates Deployment, Service, and ConfigMap mounts
-  - Service: `claims-llamastack-service` (port 8321)
-  - ConfigMap: `llama-stack-config` (contains run.yaml configuration)
-- **MCP Servers**: Standard Deployments for OCR and RAG servers
-- **PostgreSQL**: StatefulSet with PVC for persistent storage and pgvector extension
-- **InferenceService**: KServe-managed vLLM model serving for Llama 3.3 70B and Gemma 300M
-
-**OpenShift AI CRDs** (in `openshift/deployments/`):
-- **DataScienceProject**: Creates a data science project namespace with resource quotas
-- **LlamaStackDistribution**: Deploys LlamaStack via operator with pgvector backend
-
-See: [Working with Llama Stack - OpenShift AI 3.0](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/)
-
-### Step-by-Step Deployment Guide
-
-#### Step 1: Build Container Images
-
-Before deploying, build container images for all components:
-
-**1.1 Build MCP Servers**
-```bash
-# Build OCR Server
-cd backend/mcp_servers/ocr_server
-podman build -t quay.io/your-org/ocr-server:latest .
-podman push quay.io/your-org/ocr-server:latest
-
-# Build RAG Server
-cd ../rag_server
-podman build -t quay.io/your-org/rag-server:latest .
-podman push quay.io/your-org/rag-server:latest
-```
-
-**1.2 Build Backend API**
-```bash
-cd ../../..
-podman build -t quay.io/your-org/backend:latest -f backend/Dockerfile .
-podman push quay.io/your-org/backend:latest
-```
-
-**1.3 Build Frontend**
-```bash
-cd frontend
-podman build -t quay.io/your-org/frontend:latest .
-podman push quay.io/your-org/frontend:latest
-```
-
-**1.4 Build PostgreSQL Custom Image (Required)**
-
-Since standard Red Hat PostgreSQL images don't include the pgvector extension, you need to build a custom image:
+Build all container images and push to your registry:
 
 ```bash
-cd database
-podman build -t <your-registry>/postgresql-pgvector:latest .
-podman push <your-registry>/postgresql-pgvector:latest
+# Set your registry
+export REGISTRY=quay.io/your-org
+
+# Build all images
+cd /path/to/agentic-claim-demo
+./scripts/build-all-images.sh $REGISTRY v1.3
+
+# Or build individually:
+podman build -t $REGISTRY/backend:v1.3 -f backend/Dockerfile .
+podman build -t $REGISTRY/frontend:v1.3 frontend/
+podman build -t $REGISTRY/ocr-server:v1.3 backend/mcp_servers/ocr_server/
+podman build -t $REGISTRY/rag-server:v1.3 backend/mcp_servers/rag_server/
+podman build -t $REGISTRY/hfcli:v1.3 backend/hfcli/
+podman build -t $REGISTRY/postgresql-pgvector:latest database/
+
+# Push all images
+podman push $REGISTRY/backend:v1.3
+podman push $REGISTRY/frontend:v1.3
+podman push $REGISTRY/ocr-server:v1.3
+podman push $REGISTRY/rag-server:v1.3
+podman push $REGISTRY/hfcli:v1.3
+podman push $REGISTRY/postgresql-pgvector:latest
 ```
 
-**Optional: Build with proxy (if required in your environment)**
+### 2. Configure Values
+
+Create your custom values file from the sample:
+
 ```bash
-podman build \
-  --build-arg HTTPS_PROXY=http://your-proxy:8080 \
-  --build-arg HTTP_PROXY=http://your-proxy:8080 \
-  --build-arg NO_PROXY=".svc,.local,127.0.0.1" \
-  -t <your-registry>/postgresql-pgvector:latest \
-  .
-podman push <your-registry>/postgresql-pgvector:latest
+cd helm/agentic-claims-demo
+cp values-sample.yaml values-mydeployment.yaml
 ```
 
-**Update the StatefulSet image reference:**
-Edit `openshift/deployments/postgresql-statefulset.yaml` and update the image reference to match your registry:
+Edit `values-mydeployment.yaml`:
+
 ```yaml
-image: <your-registry>/postgresql-pgvector:latest
+# Update image repositories
+backend:
+  image:
+    repository: quay.io/your-org/backend
+    tag: v1.3
+
+# Set cluster domain for model endpoints
+inference:
+  endpoint: "https://llama-3-3-70b-llama-3-3-70b.apps.YOUR-CLUSTER-DOMAIN/v1"
+
+embedding:
+  endpoint: "https://embeddinggemma-300m-embeddinggemma-300m.apps.YOUR-CLUSTER-DOMAIN/v1"
+
+# Set HuggingFace token
+hfcli:
+  token: "hf_YOUR_TOKEN_HERE"
+
+# Configure MinIO credentials
+minio:
+  rootPassword: "YourStrongPassword123!"
+
+# Enable Data Science Pipelines
+dataSciencePipelines:
+  enabled: true
 ```
 
-#### Step 2: Deploy Database
+### 3. Deploy AI Models
 
-**2.1 Create PostgreSQL Secret**
-```bash
-oc create secret generic postgresql-secret \
-  --from-literal=POSTGRES_USER=claims_user \
-  --from-literal=POSTGRES_PASSWORD=<strong-password> \
-  -n claims-demo
-```
-
-**2.2 Deploy PostgreSQL + pgvector**
-```bash
-oc apply -f openshift/pvcs/postgresql-pvc.yaml
-oc apply -f openshift/deployments/postgresql-statefulset.yaml
-oc apply -f openshift/services/postgresql-service.yaml
-```
-
-**2.3 Wait for PostgreSQL to be ready**
-```bash
-oc wait --for=condition=ready pod -l app=postgresql --timeout=300s
-```
-
-**2.4 Initialize Database Schema**
-```bash
-# Copy init.sql to pod
-oc cp database/init.sql postgresql-0:/tmp/init.sql
-
-# Execute schema creation
-oc exec postgresql-0 -- psql -U claims_user -d claims_db -f /tmp/init.sql
-```
-
-**2.5 Seed Test Data**
-```bash
-# Copy seed data
-oc cp database/seed_data/001_sample_data.sql postgresql-0:/tmp/seed.sql
-
-# Execute seed script
-oc exec postgresql-0 -- psql -U claims_user -d claims_db -f /tmp/seed.sql
-
-# Verify data
-oc exec postgresql-0 -- psql -U claims_user -d claims_db -c "SELECT COUNT(*) FROM users;"
-oc exec postgresql-0 -- psql -U claims_user -d claims_db -c "SELECT COUNT(*) FROM claims;"
-```
-
-**2.6 Setup Claim Documents PVC and Copy Test PDFs**
-
-The OCR and Backend pods need access to claim documents (PDFs) stored in a shared PersistentVolumeClaim. You need to:
-1. Create the PVC
-2. Copy test PDF documents into it
-
-**Create the PVC:**
-```bash
-oc apply -f openshift/pvcs/claim-documents-pvc.yaml -n claims-demo
-```
-
-**Approach 1: Using OpenShift Job (Recommended)**
-
-This approach uses a Kubernetes Job that automatically downloads test PDFs from GitHub and copies them to the PVC.
+Before deploying the application, deploy the AI models:
 
 ```bash
-# Deploy the job to copy test documents
-oc apply -f openshift/jobs/copy-test-documents-job.yaml -n claims-demo
-
-# Wait for job to complete
-oc wait --for=condition=complete job/copy-test-documents -n claims-demo --timeout=120s
-
-# Check job logs
-oc logs job/copy-test-documents -n claims-demo
-
-# Verify files were copied
-oc run verify-docs --image=registry.access.redhat.com/ubi9/ubi-minimal:latest --restart=Never \
-  --overrides='{"spec":{"volumes":[{"name":"docs","persistentVolumeClaim":{"claimName":"claim-documents"}}],"containers":[{"name":"verify","image":"registry.access.redhat.com/ubi9/ubi-minimal:latest","command":["ls","-lh","/claim_documents/"],"volumeMounts":[{"name":"docs","mountPath":"/claim_documents"}]}]}}' \
-  -n claims-demo
-
-# Clean up verification pod
-oc delete pod verify-docs -n claims-demo
-
-# Clean up job (optional - keeps for audit trail)
-# oc delete job copy-test-documents -n claims-demo
-```
-
-**What the Job does:**
-- Downloads **50 test PDF files** directly from GitHub repository:
-  - 20 auto insurance claims (`claim_auto_001.pdf` to `claim_auto_020.pdf`)
-  - 15 home insurance claims (`claim_home_001.pdf` to `claim_home_015.pdf`)
-  - 15 medical claims (`claim_medical_001.pdf` to `claim_medical_015.pdf`)
-- Copies them to `/claim_documents/` in the PVC
-- Total size: ~216KB
-- Execution time: ~20-30 seconds
-
-**Approach 2: Using Local Script with `oc rsync` (Alternative)**
-
-If you prefer to copy documents from your local machine or have custom PDFs:
-
-```bash
-# Step 1: Generate test PDFs locally (if needed)
-cd backend/scripts
-python generate_claim_pdfs.py
-# This creates PDFs in /tmp/claim_documents/
-
-# Step 2: Upload to OpenShift PVC
-./upload_pdfs_to_openshift.sh
-```
-
-**What the script does:**
-1. Creates a temporary pod that mounts the `claim-documents` PVC
-2. Uses `oc rsync` to copy PDFs from `/tmp/claim_documents/` (local) to the PVC
-3. Verifies the upload
-4. Cleans up the temporary pod
-
-**Note**: The 50 test PDFs cover various claim scenarios and are referenced by the demo claims created with `scripts/reset_and_create_claims.sh`.
-
-#### Step 3: Deploy vLLM Inference Model
-
-**3.1 Deploy Llama 3.3 70B INT8 with vLLM (4 GPUs tensor parallel, 20K context)**
-```bash
+# Deploy Llama 3.3 70B (vLLM)
 cd openshift/deployments/llama-3-3-70B
 ./deploy.sh
-```
 
-**3.2 Wait for model to load** (takes ~10 minutes)
-```bash
+# Deploy Gemma 300M (Embeddings)
+cd ../gemma-300m-embeddings
+./deploy.sh
+
+# Wait for models to be ready (~10 minutes)
 oc wait --for=condition=ready pod -l app=llama-3-3-70b-predictor -n llama-3-3-70b --timeout=900s
+oc wait --for=condition=ready pod -l app=gemma-predictor -n embeddinggemma-300m --timeout=600s
 ```
 
-**3.3 Verify vLLM health**
+### 4. Install with Helm
+
+Deploy the complete stack:
+
 ```bash
-oc logs -l app=llama-3-3-70b-predictor -n llama-3-3-70b --tail=50
+cd helm/agentic-claims-demo
+
+# Install
+helm install agentic-claims-demo . \
+  -f values-mydeployment.yaml \
+  -n claims-demo \
+  --create-namespace \
+  --timeout=30m
+
+# Or upgrade if already installed
+helm upgrade agentic-claims-demo . \
+  -f values-mydeployment.yaml \
+  -n claims-demo \
+  --timeout=30m
 ```
 
-#### Step 4: Deploy TrustyAI Guardrails
+### 5. Verify Deployment
 
-**4.1 Deploy Guardrails Models (Optional - for PII detection and content safety)**
-```bash
-# Deploy Llama Guard 3 1B - Content safety detection
-oc apply -f openshift/guardrails/detector-inferenceservice.yaml
-
-# Deploy Granite Guardian 3.1 2B - HAP and PII detection
-oc apply -f openshift/guardrails/granite-guardian-inferenceservice.yaml
-
-# Deploy Llama Guard detector (alternative safety model)
-oc apply -f openshift/guardrails/llama-guard-inferenceservice.yaml
-```
-
-**Note**: These models provide multi-layered protection:
-- **Llama Guard 3 1B**: Detects unsafe content, hate speech, violence
-- **Granite Guardian 3.1 2B**: IBM model for PII detection (SSN, credit cards, emails)
-
-**4.2 Deploy Guardrails Configuration**
-```bash
-# Configure guardrails rules
-oc apply -f openshift/guardrails/guardrails-config.yaml
-
-# Deploy guardrails orchestrator
-oc apply -f openshift/guardrails/guardrails-orchestrator.yaml
-```
-
-**4.3 Verify Guardrails**
-```bash
-oc get pods -l app=guardrails
-oc logs -l app=guardrails-orchestrator --tail=20
-```
-
-#### Step 5: Deploy LlamaStack via OpenShift AI
-
-LlamaStack is deployed using OpenShift AI's **LlamaStackDistribution** CRD, which is managed by the OpenShift AI operator.
-
-**5.1 Create LlamaStack Configuration ConfigMap**
-
-Create the ConfigMap containing LlamaStack's run.yaml configuration:
+Wait for all components to be ready:
 
 ```bash
-# Apply the ConfigMap with model and MCP tools configuration
-oc apply -f openshift/configmaps/llamastack-config.yaml -n claims-demo
-```
-
-The ConfigMap includes:
-- **Model Configurations**: Llama 3.3 70B INT8 (20K context) and Gemma 300M embeddings
-- **Vector Store**: PostgreSQL with pgvector backend
-- **MCP Tool Groups**: OCR server and RAG server endpoints
-- **Agent Runtime**: Meta-reference implementation for ReActAgent
-
-**5.2 Deploy LlamaStackDistribution CRD**
-
-Deploy LlamaStack using the operator-managed custom resource:
-
-```bash
-# Deploy LlamaStack via operator
-oc apply -f openshift/deployments/llamastack-distribution.yaml -n claims-demo
-```
-
-The operator automatically:
-- Creates a Deployment for the LlamaStack server
-- Creates a Service named `claims-llamastack-service` (port 8321)
-- Mounts the `llama-stack-config` ConfigMap to `/etc/llama-stack/run.yaml`
-- Manages pod lifecycle and health checks
-
-**5.3 Wait for LlamaStack to be Ready**
-
-```bash
-# Wait for the pod to be ready (managed by operator)
-oc wait --for=condition=ready pod -l app=llama-stack -n claims-demo --timeout=300s
-
-# Check the logs
-oc logs -l app=llama-stack -n claims-demo --tail=50
-
-# Verify the service
-oc get svc claims-llamastack-service -n claims-demo
-```
-
-**5.4 Verify LlamaStack Configuration**
-
-```bash
-# Check that models are registered
-oc exec -it $(oc get pod -l app=llama-stack -o name | head -n1) -n claims-demo -- \
-  curl -s localhost:8321/v1/models | jq '.data[] | {model_id, model_type}'
+# Check all pods
+oc get pods -n claims-demo
 
 # Expected output:
-# {"model_id": "llama-3-3-70b", "model_type": "llm"}
-# {"model_id": "gemma-300m", "model_type": "embedding"}
+# backend-xxx                     2/2   Running
+# frontend-xxx                    1/1   Running
+# postgresql-0                    1/1   Running
+# llamastack-rhoai-xxx            1/1   Running
+# rag-server-xxx                  1/1   Running
+# mariadb-dspa-xxx                1/1   Running
+# ds-pipeline-dspa-xxx            2/2   Running
+# ds-pipeline-persistenceagent... 1/1   Running
+# ...
+
+# Check DSPA status
+oc get dspa -n claims-demo
+# Should show: Ready=True
+
+# Get application URLs
+oc get routes -n claims-demo
 ```
 
-**5.5 Verify MCP Tools Registration**
-
-Verify that MCP servers are properly registered:
+### 6. Access the Application
 
 ```bash
-# List registered tool groups
-oc exec -it $(oc get pod -l app=llama-stack -o name | head -n1) -n claims-demo -- \
-  curl -s localhost:8321/v1/tool_groups | jq '.data[] | {toolgroup_id, provider_id}'
+# Frontend URL
+echo "Frontend: http://$(oc get route frontend -n claims-demo -o jsonpath='{.spec.host}')"
 
-# Expected output:
-# {"toolgroup_id": "builtin::rag", "provider_id": "rag-runtime"}
-# {"toolgroup_id": "mcp::ocr-server", "provider_id": "model-context-protocol"}
-# {"toolgroup_id": "mcp::rag-server", "provider_id": "model-context-protocol"}
+# Backend API URL
+echo "Backend: http://$(oc get route backend -n claims-demo -o jsonpath='{.spec.host}')/api/v1/claims"
+
+# MinIO Console (optional)
+echo "MinIO: http://$(oc get route agentic-claims-demo-minio-console -n claims-demo -o jsonpath='{.spec.host}')"
 ```
 
-**5.6 Updating LlamaStack Configuration**
+### 7. Test with Demo Claims
 
-To update the LlamaStack configuration:
+The Helm chart automatically creates seed data. Process a claim:
 
 ```bash
-# 1. Update the ConfigMap
-oc edit configmap llama-stack-config -n claims-demo
-
-# 2. Delete the LlamaStack pod (operator will recreate it with new config)
-oc delete pod -l app=llama-stack -n claims-demo
-
-# 3. Wait for new pod to be ready
-oc wait --for=condition=ready pod -l app=llama-stack -n claims-demo --timeout=300s
-
-# 4. Verify the new configuration
-oc logs -l app=llama-stack -n claims-demo --tail=50
-```
-
-📚 **Documentation**:
-- [OpenShift AI 3.0 - Working with Llama Stack](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.0/html-single/working_with_llama_stack/)
-- [LlamaStack GitHub Repository](https://github.com/meta-llama/llama-stack)
-
-#### Step 6: OCR Configuration - EasyOCR (Default)
-
-⚠️ **Important Change**: The OCR MCP Server now uses **EasyOCR** (embedded library) instead of Qwen-VL 7B.
-
-**Why the change?**
-- **Performance**: EasyOCR processes documents in 2-4 seconds vs 30+ seconds for Qwen-VL
-- **Reliability**: No timeout issues (LlamaStack has a 30-second MCP tool timeout)
-- **Simplicity**: No external InferenceService required - OCR runs inside the MCP server pod
-- **Resources**: Optional GPU usage, much smaller footprint
-
-**No additional deployment needed** - EasyOCR is installed automatically when deploying the OCR MCP server.
-
-**Configuration**:
-```bash
-# EasyOCR language support (default: English + French)
-# Edit OCR server deployment to add more languages if needed
-oc set env deployment/ocr-server OCR_LANGUAGES=en,fr,es,de -n claims-demo
-```
-
-**Supported languages**: 80+ languages including English, French, Spanish, German, Chinese, Arabic, etc.
-
----
-
-#### Step 6 (Alternative): Deploy Qwen-VL 7B for Advanced Vision (Optional - Not Recommended)
-
-**⚠️ Deprecated for OCR**: Qwen-VL is no longer used by default due to performance issues (30+ second processing time exceeds LlamaStack timeout).
-
-**When to use Qwen-VL**: Only if you need advanced vision understanding beyond text extraction (e.g., image analysis, visual question answering).
-
-Deployment instructions preserved for reference: [`openshift/qwen-vl-7b/README.md`](openshift/qwen-vl-7b/README.md)
-
-**Requirements**: 1 GPU (L40 or equivalent with 24GB+ VRAM) + ~30GB storage.
-
-#### Step 7: Deploy MCP Servers
-
-**7.1 Deploy OCR Server**
-```bash
-oc apply -f openshift/deployments/ocr-server-deployment.yaml
-oc apply -f openshift/services/ocr-server-service.yaml
-```
-
-**7.2 Deploy RAG Server**
-```bash
-oc apply -f openshift/deployments/rag-server-deployment.yaml
-oc apply -f openshift/services/rag-server-service.yaml
-```
-
-**7.3 Verify MCP Servers**
-```bash
-oc get pods -l component=mcp-server
-oc logs -l app=ocr-server --tail=20
-oc logs -l app=rag-server --tail=20
-```
-
-#### Step 8: Deploy Backend API
-
-**8.1 Create Backend ConfigMaps**
-```bash
-oc apply -f openshift/configmaps/backend-config.yaml
-oc apply -f openshift/configmaps/prompts-config.yaml
-```
-
-**8.2 Deploy Backend**
-```bash
-oc apply -f openshift/deployments/backend-deployment.yaml
-oc apply -f openshift/services/backend-service.yaml
-oc apply -f openshift/routes/backend-route.yaml
-```
-
-**8.3 Verify Backend**
-```bash
-oc get pods -l app=backend
-oc logs -l app=backend --tail=50
-
-# Test health endpoint
-BACKEND_URL=$(oc get route backend -o jsonpath='{.spec.host}')
-curl http://$BACKEND_URL/health
-```
-
-#### Step 9: Deploy Frontend (Optional)
-
-**9.1 Deploy Frontend**
-```bash
-oc apply -f openshift/deployments/frontend-deployment.yaml
-oc apply -f openshift/services/frontend-service.yaml
-oc apply -f openshift/routes/frontend-route.yaml
-```
-
-**9.2 Get Frontend URL**
-```bash
-FRONTEND_URL=$(oc get route frontend -n claims-demo -o jsonpath='{.spec.host}')
-echo "Access the application at: https://$FRONTEND_URL"
-```
-
-#### Step 10: Test End-to-End Workflow
-
-**10.1 Access the Frontend**
-```bash
-# Open browser to frontend URL
-echo "Application URL: http://$(oc get route frontend -o jsonpath='{.spec.host}')"
-```
-
-**10.2 Test Claims Processing via API**
-```bash
-# Get a sample claim ID from database
-CLAIM_ID=$(oc exec postgresql-0 -- psql -U claims_user -d claims_db -t -c \
+# Get a sample claim ID
+CLAIM_ID=$(oc exec -n claims-demo statefulset/postgresql -- \
+  psql -U claims_user -d claims_db -t -c \
   "SELECT id FROM claims WHERE status='pending' LIMIT 1;")
 
-# Process claim via API
-BACKEND_URL=$(oc get route backend -o jsonpath='{.spec.host}')
+# Process the claim
+BACKEND_URL=$(oc get route backend -n claims-demo -o jsonpath='{.spec.host}')
 curl -X POST "http://$BACKEND_URL/api/v1/claims/${CLAIM_ID}/process" \
   -H "Content-Type: application/json" \
   -d '{"skip_ocr": false, "enable_rag": true}'
 
-# Check processing status
-curl "http://$BACKEND_URL/api/v1/claims/${CLAIM_ID}/status"
+# Check result
+curl "http://$BACKEND_URL/api/v1/claims/${CLAIM_ID}/status" | jq
 ```
 
-**10.3 Monitor Processing**
+## Configuration
+
+### Helm Values Structure
+
+```yaml
+global:
+  namespace: claims-demo
+
+backend:
+  image:
+    repository: quay.io/your-org/backend
+    tag: v1.3
+  replicas: 1
+
+postgresql:
+  enabled: true
+  auth:
+    username: claims_user
+    database: claims_db
+    existingSecret: postgresql-secret
+  persistence:
+    size: 10Gi
+
+minio:
+  enabled: true
+  persistence:
+    size: 20Gi
+
+dataSciencePipelines:
+  enabled: true
+  database:
+    mariaDB:
+      pvcSize: 10Gi
+  objectStorage:
+    useInternalMinio: true
+    scheme: http  # Important!
+```
+
+### Important Configuration Notes
+
+**1. Object Storage Scheme**:
+```yaml
+dataSciencePipelines:
+  objectStorage:
+    scheme: http  # Must be http for internal MinIO
+```
+
+**2. Cluster Domain**:
+Update model endpoints with your actual cluster domain:
+```yaml
+inference:
+  endpoint: "https://llama-3-3-70b-llama-3-3-70b.apps.YOUR-CLUSTER.com/v1"
+```
+
+**3. Storage Classes**:
+Set appropriate storage class for your cluster:
+```yaml
+postgresql:
+  persistence:
+    storageClass: "gp3-csi"  # AWS
+    # storageClass: "standard"  # GCP
+    # storageClass: ""  # Use default
+```
+
+## Advanced Topics
+
+### MinIO and Data Science Pipelines
+
+The Helm chart deploys:
+
+1. **MinIO**: S3-compatible object storage for pipeline artifacts
+2. **DSPA (DataSciencePipelinesApplication)**: Kubeflow Pipelines v2
+3. **MariaDB**: Pipeline metadata storage
+
+Access MinIO Console:
 ```bash
-# Watch backend logs
-oc logs -f -l app=backend
+# Get credentials from secret
+oc get secret agentic-claims-demo-minio-credentials -n claims-demo -o jsonpath='{.data.MINIO_ROOT_USER}' | base64 -d
+oc get secret agentic-claims-demo-minio-credentials -n claims-demo -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 -d
 
-# Watch LlamaStack logs for ReActAgent activity
-oc logs -f -l app=llama-stack | grep -i "thought\|action\|observation"
+# Get console URL
+oc get route agentic-claims-demo-minio-console -n claims-demo
 ```
 
-#### Step 11: Create Demo Claims
+### GitOps Deployment (ArgoCD)
 
-**11.1 Reset Database and Create Test Claims**
+The Helm chart includes ArgoCD sync-waves for proper ordering:
 
-The `reset_and_create_claims.sh` script provides an easy way to clean the database and create fresh demo claims:
-
-```bash
-# Run the reset script to:
-# - Delete all existing claims, decisions, and logs
-# - Create 10 fresh pending claims with different outcomes
-cd scripts
-./reset_and_create_claims.sh
+```yaml
+annotations:
+  argocd.argoproj.io/sync-wave: "10"
 ```
 
-**What the script creates**:
-- **10 pending claims** ready for processing
-- **Claims 1, 4, 7, 9**: user_001 (has contracts) → Should **APPROVE**
-- **Claims 2, 5, 8**: user_002 (has contracts) → Should **APPROVE**
-- **Claims 3, 6, 10**: user_003 (no contracts) → Should **MANUAL_REVIEW**
+Deploy order:
+- Wave -100: Namespaces
+- Wave -90: RBAC, Secrets
+- Wave 0: Applications, Services
+- Wave 5: Database initialization
+- Wave 10: LlamaStack
 
-**11.2 Process a Specific Claim**
+### Helm Hooks
 
-After running the reset script, you can process any claim using its ID displayed by the script:
+The chart uses hooks for:
+- **post-install**: Database initialization, bucket creation
+- **pre-install**: Namespace setup, RBAC
 
-```bash
-# Get claim ID from script output (e.g., CLM-2026-AUTO-001)
-CLAIM_ID="<claim-id-from-script>"
+Hook weights control execution order (lower runs first).
 
-# Process the claim via API
-BACKEND_URL=$(oc get route backend -o jsonpath='{.spec.host}')
-curl -X POST "https://${BACKEND_URL}/api/v1/claims/${CLAIM_ID}/process" \
-  -H "Content-Type: application/json" \
-  -d '{"workflow_type": "standard", "skip_ocr": false, "enable_rag": true}'
+### Guardrails (Optional)
 
-# Monitor the claim status
-curl "https://${BACKEND_URL}/api/v1/claims/${CLAIM_ID}/status" | jq
+Enable PII detection and content safety:
+
+```yaml
+guardrails:
+  enabled: true
 ```
 
-**11.3 Process All Demo Claims**
-
-To process all 10 demo claims sequentially:
-
-```bash
-# Get all pending claim IDs
-CLAIM_IDS=$(oc exec postgresql-0 -n claims-demo -- psql -U claims_user -d claims_db -t -c \
-  "SELECT id FROM claims WHERE status='pending' ORDER BY claim_number;")
-
-# Process each claim
-for CLAIM_ID in $CLAIM_IDS; do
-  echo "Processing claim: $CLAIM_ID"
-  curl -X POST "https://${BACKEND_URL}/api/v1/claims/${CLAIM_ID}/process" \
-    -H "Content-Type: application/json" \
-    -d '{"skip_ocr": false, "enable_rag": true}'
-  sleep 5  # Wait between claims
-done
-```
-
-### Configuration
-
-Key configuration is externalized via ConfigMaps:
-
-- **Backend Config**: `openshift/configmaps/backend-config.yaml`
-  - API settings, database connections, LlamaStack endpoints
-
-- **LlamaStack Config**: `openshift/configmaps/llamastack-config.yaml`
-  - **Model Configurations**:
-    - Llama 3.3 70B INT8 (20K context, 4 GPUs tensor parallel)
-    - Gemma 300M embeddings (768-dim)
-  - **Vector Store**: PostgreSQL with pgvector backend
-  - **MCP Tool Groups**: OCR server and RAG server endpoints
-  - **Agent Runtime**: Meta-reference ReActAgent implementation
-
-- **Prompts**: `openshift/configmaps/prompts-config.yaml`
-  - Agent instructions and system prompts
-
-## API Endpoints
-
-### Backend REST API
-
-**Base URL**: `http://backend-service.claims-demo.svc.cluster.local:8000/api/v1`
-
-**Main Endpoints**:
-- `GET /claims` - List all claims
-- `POST /claims` - Create new claim
-- `GET /claims/{id}` - Get claim details
-- `POST /claims/{id}/process` - Process claim with AI agent
-- `GET /claims/{id}/status` - Get processing status
-- `GET /claims/{id}/decision` - Get AI decision and reasoning
+Deploys:
+- Llama Guard 3 1B (content safety)
+- Granite Guardian 3.1 2B (PII detection)
 
 ## Development
 
-### Local Setup
+### Manual Deployment (Development/Testing)
 
-1. **Backend**:
+For development or manual testing, see [MANUAL_DEPLOYMENT.md](docs/MANUAL_DEPLOYMENT.md).
+
+### Local Development
+
+**Backend**:
 ```bash
 cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8000
 ```
 
-2. **Frontend**:
+**Frontend**:
 ```bash
 cd frontend
 npm install
 npm start
 ```
 
-3. **Database** (via Docker Compose):
+**Database** (Docker Compose):
 ```bash
 docker-compose up -d postgresql
 ```
 
-### Environment Variables
+### Database Schema Updates
 
-Required environment variables for local development:
+⚠️ **Important**: After cloning the repository or modifying database schema files, you must synchronize the SQL files to Helm:
 
 ```bash
-# Database
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=claims_db
-POSTGRES_USER=claims_user
-POSTGRES_PASSWORD=your_password
+# Copy database schema and seed data to Helm charts
+cp database/init.sql helm/agentic-claims-demo/files/cm.init-postgres/init.sql
+cp database/seed_data/001_sample_data.sql helm/agentic-claims-demo/files/cm.init-postgres/seed.sql
+```
 
-# LlamaStack (OpenShift AI managed)
-LLAMASTACK_ENDPOINT=http://claims-llamastack-service:8321
-LLAMASTACK_DEFAULT_MODEL=llama-3-3-70b
+**When to run this:**
+- After cloning the repository for the first time
+- After modifying `database/init.sql` (schema changes)
+- After modifying `database/seed_data/001_sample_data.sql` (seed data changes)
+- Before deploying with Helm
+
+The source of truth files are:
+- Schema: `database/init.sql`
+- Seed data: `database/seed_data/001_sample_data.sql`
+
+### Building Images
+
+Build script for all images:
+```bash
+./scripts/build-all-images.sh <registry> <tag>
+```
+
+Or manually:
+```bash
+# Backend
+podman build -t quay.io/your-org/backend:v1.3 -f backend/Dockerfile .
+
+# Frontend (with SSL workaround if needed)
+podman build -t quay.io/your-org/frontend:v1.3 \
+  --build-arg NPM_CONFIG_STRICT_SSL=false \
+  frontend/
 
 # MCP Servers
-OCR_SERVER_URL=http://localhost:8080
-RAG_SERVER_URL=http://localhost:8081
+podman build -t quay.io/your-org/ocr-server:v1.3 backend/mcp_servers/ocr_server/
+podman build -t quay.io/your-org/rag-server:v1.3 backend/mcp_servers/rag_server/
 ```
+
+## Troubleshooting
+
+### MCP Tools Not Listed
+
+**Problem**: LlamaStack cannot list MCP tools
+
+**Error**: `Failed to list MCP tools`
+
+**Root Cause**: MCP servers don't support HTTP OPTIONS method
+
+**Solution**: Add OPTIONS support to MCP servers:
+
+```python
+# In your MCP server (FastAPI)
+@app.options("/sse")
+async def sse_options():
+    return {
+        "methods": ["GET", "POST", "OPTIONS"],
+        "mcp_version": "0.1.0"
+    }
+```
+
+### DSPA Not Ready
+
+**Problem**: DataSciencePipelinesApplication stuck in "Not Ready"
+
+**Check**:
+```bash
+oc get dspa -n claims-demo -o yaml
+oc get pods -n claims-demo | grep pipeline
+```
+
+**Common Issues**:
+
+1. **ObjectStore connection failed**:
+   - Check `scheme: http` (not https) for internal MinIO
+   - Verify MinIO is running
+
+2. **Database connection failed**:
+   - Wait for MariaDB pod to be ready
+   - Check database credentials secret
+
+3. **Service name too long** (> 63 chars):
+   - Use short DSPA name: `dspa` instead of `agentic-claims-demo-pipelines`
+
+### PostgreSQL Init Failed
+
+**Problem**: init-postgres job fails
+
+**Check logs**:
+```bash
+oc logs job/init-postgres -n claims-demo
+```
+
+**Common Issues**:
+- PostgreSQL not ready: Wait for StatefulSet to be Running
+- Secret not found: Check `postgresql-secret` exists
+- SQL syntax error: Review `database/init.sql`
+
+### LlamaStack Cannot Connect to Models
+
+**Problem**: LlamaStack fails to query models
+
+**Check**:
+1. Model endpoints are accessible:
+   ```bash
+   oc get inferenceservice -A
+   ```
+
+2. Cluster domain is correct in values.yaml
+
+3. Models are ready:
+   ```bash
+   oc get pods -n llama-3-3-70b
+   oc logs -l app=llama-3-3-70b-predictor -n llama-3-3-70b
+   ```
+
+### Helm Upgrade Fails
+
+**Problem**: Hook jobs already exist
+
+**Solution**:
+```bash
+# Delete old hook jobs
+oc delete job -l helm.sh/hook -n claims-demo
+
+# Retry upgrade
+helm upgrade agentic-claims-demo . -f values.yaml -n claims-demo
+```
+
+### Frontend Cannot Reach Backend
+
+**Problem**: Frontend shows connection errors
+
+**Check**:
+1. Backend route exists:
+   ```bash
+   oc get route backend -n claims-demo
+   ```
+
+2. Frontend env var is correct:
+   ```bash
+   oc get deployment frontend -n claims-demo -o jsonpath='{.spec.template.spec.containers[0].env}'
+   ```
+
+3. Backend is healthy:
+   ```bash
+   curl http://$(oc get route backend -o jsonpath='{.spec.host}')/health
+   ```
+
+## API Reference
+
+### Backend REST API
+
+**Base URL**: `http://backend-claims-demo.apps.CLUSTER_DOMAIN/api/v1`
+
+**Endpoints**:
+
+```bash
+# List all claims
+GET /claims
+
+# Get claim details
+GET /claims/{id}
+
+# Create new claim
+POST /claims
+{
+  "user_id": "user_001",
+  "claim_type": "auto",
+  "amount": 5000.00,
+  "description": "Car accident damage",
+  "document_path": "/claim_documents/claim_auto_001.pdf"
+}
+
+# Process claim with AI agent
+POST /claims/{id}/process
+{
+  "skip_ocr": false,
+  "enable_rag": true
+}
+
+# Get processing status
+GET /claims/{id}/status
+
+# Get decision
+GET /claims/{id}/decision
+```
+
+### MCP Protocol Endpoints
+
+**OCR Server**: `http://ocr-server.claims-demo.svc.cluster.local:8080/sse`
+
+**RAG Server**: `http://rag-server.claims-demo.svc.cluster.local:8080/sse`
+
+**Methods**:
+- `initialize`: Get server info
+- `tools/list`: List available tools
+- `tools/call`: Execute a tool
+
+**Health Checks**:
+- `GET /health/live`: Liveness probe
+- `GET /health/ready`: Readiness probe
 
 ## Project Structure
 
 ```
 agentic-claim-demo/
+├── helm/
+│   └── agentic-claims-demo/      # Helm chart
+│       ├── templates/
+│       │   ├── backend/
+│       │   ├── frontend/
+│       │   ├── postgresql/
+│       │   ├── minio/
+│       │   ├── dspa/             # Data Science Pipelines
+│       │   └── llamastack/
+│       ├── values.yaml
+│       └── values-sample.yaml
 ├── backend/
 │   ├── app/
-│   │   ├── api/              # FastAPI endpoints
-│   │   │   ├── claims.py     # Claims processing API
-│   │   │   └── schemas.py    # Pydantic models
-│   │   ├── core/             # Core configuration
-│   │   │   ├── config.py     # Settings management
-│   │   │   └── database.py   # Database connections
-│   │   ├── models/           # SQLAlchemy models
-│   │   │   └── claim.py      # Claim data models
-│   │   └── llamastack/       # LlamaStack integration
-│   │       └── prompts.py    # Agent prompts
-│   └── mcp_servers/          # Custom MCP servers
-│       ├── ocr_server/
-│       └── rag_server/
+│   │   ├── api/                  # FastAPI endpoints
+│   │   ├── models/               # SQLAlchemy models
+│   │   └── llamastack/           # LlamaStack integration
+│   └── mcp_servers/
+│       ├── ocr_server/           # OCR MCP Server
+│       └── rag_server/           # RAG MCP Server
 ├── frontend/
 │   └── src/
-│       ├── components/       # React components
-│       ├── pages/            # Page components
-│       └── services/         # API clients
-├── openshift/                # OpenShift deployment manifests
-│   ├── configmaps/           # Configuration (backend, prompts, llamastack)
-│   ├── deployments/          # Deployments and CRDs (including LlamaStackDistribution)
-│   ├── services/             # Service definitions
-│   ├── routes/               # OpenShift routes
-│   ├── pvcs/                 # Persistent volume claims
-│   └── guardrails/           # TrustyAI guardrails
-├── helm/                     # Helm chart for automated deployment
-│   └── agentic-claims-demo/
+│       ├── components/
+│       └── pages/
 ├── database/
-│   ├── init.sql              # Database schema
-│   ├── seed_data/            # Sample data
-│   └── migrations/           # Database migrations
-└── scripts/                  # Deployment and testing scripts
+│   ├── init.sql                  # Schema
+│   ├── seed_data/                # Sample data
+│   └── Dockerfile                # pgvector image
+├── openshift/                    # Manual deployment manifests
+└── scripts/                      # Utility scripts
 ```
-
-## Technology Stack Details
-
-### Backend Stack
-- **Python 3.12**
-- **FastAPI**: Modern async web framework
-- **SQLAlchemy**: ORM with async support
-- **Pydantic**: Data validation
-- **llama-stack-client 0.3.5**: LlamaStack SDK
-- **asyncpg**: Async PostgreSQL driver
-
-### Frontend Stack
-- **React 18**
-- **TypeScript**
-- **Axios**: HTTP client
-- **React Router**: Navigation
-
-### AI & ML Stack
-- **LlamaStack**: AI orchestration platform
-- **vLLM**: High-performance LLM inference
-- **Llama 3.3 70B INT8**: Language model (20K context window, tensor parallel)
-- **pgvector**: Vector similarity search
-- **MCP Protocol**: Standardized tool integration
 
 ## Performance Considerations
 
 ### vLLM Configuration
-- **GPUs**: 4x NVIDIA L40 (48GB each) = 192GB total VRAM
-- **Tensor Parallelism**: TP=4 for model distribution across GPUs
-- **Quantization**: INT8 model weights + FP8 KV cache
-- **Context Length**: 20K tokens
-- **GPU Memory Utilization**: 75% (optimized for stability)
-- **Per-GPU Usage**: ~24-26GB (model + KV cache + activations)
+
+- **GPUs**: 4x NVIDIA L40 (48GB each)
+- **Tensor Parallelism**: TP=4
+- **Quantization**: INT8 weights + FP8 KV cache
+- **Context**: 20K tokens
+- **Memory**: ~24-26GB per GPU
 
 ### Database Optimization
+
 - **pgvector HNSW Index**: Fast similarity search
-- **Connection Pooling**: 10 connections, 20 max overflow
-- **Async Operations**: Non-blocking database queries
+- **Connection Pooling**: 10 connections, 20 max
+- **Async Operations**: Non-blocking queries
+
+### OCR Performance
+
+- **EasyOCR**: 2-4 seconds per document
+- **No timeout issues** (vs 30s+ for Qwen-VL)
+- **Optional GPU acceleration**
 
 ## Security
 
-- **Input Validation**: All inputs validated via Pydantic schemas
-- **PII Protection**: Guardrails for sensitive data detection
-- **CORS**: Configurable allowed origins
 - **Secret Management**: OpenShift Secrets for credentials
 - **Network Isolation**: Internal service communication
+- **RBAC**: Helm creates necessary ServiceAccounts
+- **PII Protection**: Optional guardrails for sensitive data
+- **Input Validation**: Pydantic schemas
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+
+## License
+
+[Add your license here]
+
+## Support
+
+For issues and questions:
+- GitHub Issues: https://github.com/your-org/agentic-claim-demo/issues
+

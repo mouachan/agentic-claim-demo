@@ -24,8 +24,8 @@ data:
   DATABASE_MAX_OVERFLOW: "20"
 
   LLAMASTACK_ENDPOINT: {{ quote (include "llamastack.endpoint" .) }}
-  LLAMASTACK_DEFAULT_MODEL: "vllm-inference-1/{{ .Values.inference.model.name }}"
-  LLAMASTACK_EMBEDDING_MODEL: "gemma-embedding/{{ .Values.embedding.model.name }}"
+  LLAMASTACK_DEFAULT_MODEL: "vllm-inference/{{ .Values.inference.model.name }}"
+  LLAMASTACK_EMBEDDING_MODEL: "vllm-embedding/{{ .Values.embedding.model.name }}"
   LLAMASTACK_EMBEDDING_DIMENSION: {{ .Values.llamastack.embedding.dimension | quote }}
   LLAMASTACK_TIMEOUT: "300"
   LLAMASTACK_MAX_RETRIES: "3"
