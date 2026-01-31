@@ -130,7 +130,7 @@ llamastack:
     enabled: true
     host: ""  # Auto-generated if empty
     tls:
-      enabled: false
+      enabled: true  # Enable TLS edge termination
 
   # Model configuration
   model:
@@ -245,7 +245,7 @@ backend:
     enabled: true
     host: ""  # Auto-generated if empty
     tls:
-      enabled: false
+      enabled: true  # Enable TLS edge termination
 
   pvc:
     accessMode: ReadWriteOnce
@@ -293,7 +293,7 @@ frontend:
     enabled: true
     host: ""  # Auto-generated if empty
     tls:
-      enabled: false
+      enabled: true  # Enable TLS edge termination
 
   # Resources
   resources:
@@ -359,12 +359,12 @@ minio:
       enabled: true
       host: ""  # Auto-generated if empty
       tls:
-        enabled: false
+        enabled: true  # Enable TLS edge termination
     console:
       enabled: true
       host: ""  # Auto-generated if empty
       tls:
-        enabled: false
+        enabled: true  # Enable TLS edge termination
 
   # Persistence
   persistence:

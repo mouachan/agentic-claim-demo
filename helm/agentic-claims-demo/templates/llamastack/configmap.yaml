@@ -56,7 +56,17 @@ data:
             backend: kv_default
             namespace: vector_io::pgvector
 
-      safety: []
+      safety:
+{{- if .Values.guardrails.enabled }}
+      - provider_id: trustyai_fms
+        provider_type: remote::trustyai_fms
+        config:
+          # GuardrailsOrchestrator API endpoint
+          url: http://{{ .Values.guardrails.name }}-service.{{ include "agentic-claims-demo.namespace" . }}.svc.cluster.local:8032
+          tls_verify: false
+{{- else }}
+      []
+{{- end }}
 
       agents:
       - provider_id: meta-reference
@@ -166,7 +176,23 @@ data:
         provider_id: vllm-embedding
         model_type: embedding
 
-      shields: []
+      shields:
+{{- if .Values.guardrails.enabled }}
+      # PII Detection Shield
+      - shield_id: pii_detector
+        provider_shield_id: pii_detector
+        provider_id: trustyai_fms
+        params:
+          type: content
+          confidence_threshold: {{ .Values.guardrails.detectors.pii.threshold }}
+          message_types: ["user", "assistant"]
+          detectors:
+            pii:
+              detector_params:
+                entity_types: ["EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "US_SSN", "DATE_TIME", "PERSON", "LOCATION"]
+{{- else }}
+      []
+{{- end }}
       vector_dbs: []
       datasets: []
       scoring_fns: []

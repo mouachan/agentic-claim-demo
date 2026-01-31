@@ -243,6 +243,29 @@ class AskAgentResponse(BaseModel):
 
 
 # =============================================================================
+# Guardrails Schemas
+# =============================================================================
+
+class GuardrailsDetectionResponse(BaseModel):
+    """Schema for a single guardrails detection."""
+    id: UUID
+    detection_type: str  # EMAIL_ADDRESS, PHONE_NUMBER, etc.
+    severity: Optional[str] = None
+    action_taken: Optional[str] = None
+    detected_at: datetime
+    record_metadata: Optional[Dict[str, Any]] = None  # Contains source_step, detected_fields, etc.
+
+    model_config = {"from_attributes": True}
+
+
+class GuardrailsDetectionsListResponse(BaseModel):
+    """Response for listing all detections for a claim."""
+    claim_id: UUID
+    detections: List[GuardrailsDetectionResponse]
+    total: int
+
+
+# =============================================================================
 # Error Schemas
 # =============================================================================
 

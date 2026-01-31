@@ -28,10 +28,16 @@ from app.api import schemas
 from app.core.config import settings
 from app.core.database import get_db
 from app.models import claim as models
+from app.services.agent.reviewer import ReviewService
+from app.services.agent.context_builder import ContextBuilder
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Initialize services
+review_service = ReviewService()
+context_builder = ContextBuilder()
 
 
 # =============================================================================
@@ -301,125 +307,52 @@ async def submit_review_action(
     This endpoint is an alternative to WebSocket for submitting actions.
     It also broadcasts the action via WebSocket to active reviewers.
     """
-    # Get claim
-    result = await db.execute(
-        select(models.Claim).where(models.Claim.id == claim_id)
-    )
-    claim = result.scalar_one_or_none()
+    try:
+        # Get claim
+        result = await db.execute(
+            select(models.Claim).where(models.Claim.id == claim_id)
+        )
+        claim = result.scalar_one_or_none()
 
-    if not claim:
-        raise HTTPException(status_code=404, detail="Claim not found")
+        if not claim:
+            raise HTTPException(status_code=404, detail="Claim not found")
 
-    # Get the claim decision to update it
-    decision_result = await db.execute(
-        select(models.ClaimDecision).where(models.ClaimDecision.claim_id == claim_id)
-    )
-    claim_decision = decision_result.scalar_one_or_none()
+        # Process action using review service
+        updated_claim, updated_decision = await review_service.process_action(
+            db=db,
+            action=action.action,
+            entity_type="claim",
+            entity_id=str(claim_id),
+            reviewer_id=action.reviewer_id,
+            reviewer_name=action.reviewer_name,
+            comment=action.comment
+        )
 
-    # Update claim based on action
-    timestamp = datetime.now(timezone.utc)
-
-    if action.action == "approve":
-        claim.status = "completed"  # Use 'completed' status for approved claims
-        claim.updated_at = timestamp
-
-        # Update ClaimDecision with final reviewer decision
-        if claim_decision:
-            claim_decision.final_decision = "approve"
-            claim_decision.final_decision_by = action.reviewer_id
-            claim_decision.final_decision_by_name = action.reviewer_name
-            claim_decision.final_decision_at = timestamp
-            claim_decision.final_decision_notes = action.comment
-            claim_decision.updated_at = timestamp
-
-        # Log the approval in agent_logs
-        if not claim.agent_logs:
-            claim.agent_logs = []
-        claim.agent_logs.append({
-            "timestamp": timestamp.isoformat(),
+        # Broadcast action via WebSocket
+        await manager.broadcast(str(claim_id), {
+            "type": "claim_updated",
+            "action": action.action,
             "reviewer_id": action.reviewer_id,
             "reviewer_name": action.reviewer_name,
-            "type": "approve",
-            "message": action.comment
+            "comment": action.comment,
+            "new_status": updated_claim.status.value if hasattr(updated_claim.status, 'value') else updated_claim.status,
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
-        flag_modified(claim, "agent_logs")
 
-    elif action.action == "reject":
-        claim.status = "failed"  # Use 'failed' status for rejected claims
-        claim.updated_at = timestamp
+        logger.info(f"Review action '{action.action}' by {action.reviewer_name} on claim {claim_id}")
 
-        # Update ClaimDecision with final reviewer decision
-        if claim_decision:
-            claim_decision.final_decision = "deny"  # Use 'deny' for consistency with DecisionType enum
-            claim_decision.final_decision_by = action.reviewer_id
-            claim_decision.final_decision_by_name = action.reviewer_name
-            claim_decision.final_decision_at = timestamp
-            claim_decision.final_decision_notes = action.comment
-            claim_decision.updated_at = timestamp
+        return {
+            "success": True,
+            "claim_id": str(claim_id),
+            "action": action.action,
+            "new_status": updated_claim.status.value if hasattr(updated_claim.status, 'value') else updated_claim.status
+        }
 
-        # Log the rejection in agent_logs
-        if not claim.agent_logs:
-            claim.agent_logs = []
-        claim.agent_logs.append({
-            "timestamp": timestamp.isoformat(),
-            "reviewer_id": action.reviewer_id,
-            "reviewer_name": action.reviewer_name,
-            "type": "reject",
-            "message": action.comment
-        })
-        flag_modified(claim, "agent_logs")
-
-    elif action.action == "comment":
-        # Add comment to agent_logs
-        if not claim.agent_logs:
-            claim.agent_logs = []
-
-        claim.agent_logs.append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "reviewer_id": action.reviewer_id,
-            "reviewer_name": action.reviewer_name,
-            "type": "comment",
-            "message": action.comment
-        })
-        # Mark as modified for SQLAlchemy
-        flag_modified(claim, "agent_logs")
-
-    elif action.action == "request_info":
-        claim.status = "pending_info"
-        if not claim.agent_logs:
-            claim.agent_logs = []
-
-        claim.agent_logs.append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "reviewer_id": action.reviewer_id,
-            "reviewer_name": action.reviewer_name,
-            "type": "request_info",
-            "message": action.comment
-        })
-        flag_modified(claim, "agent_logs")
-
-    await db.commit()
-    await db.refresh(claim)
-
-    # Broadcast action via WebSocket
-    await manager.broadcast(str(claim_id), {
-        "type": "claim_updated",
-        "action": action.action,
-        "reviewer_id": action.reviewer_id,
-        "reviewer_name": action.reviewer_name,
-        "comment": action.comment,
-        "new_status": claim.status,
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    })
-
-    logger.info(f"Review action '{action.action}' by {action.reviewer_name} on claim {claim_id}")
-
-    return {
-        "success": True,
-        "claim_id": str(claim_id),
-        "action": action.action,
-        "new_status": claim.status
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing review action: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{claim_id}/messages")
@@ -443,8 +376,27 @@ async def get_review_messages(
     # Extract review messages from agent_logs
     messages = []
     if claim.agent_logs:
-        for log in claim.agent_logs:
-            if log.get("type") in ["comment", "request_info"]:
+        i = 0
+        while i < len(claim.agent_logs):
+            log = claim.agent_logs[i]
+
+            # Group reviewer_question + agent_answer into qa_exchange
+            if log.get("type") == "reviewer_question":
+                # Look for the next agent_answer
+                answer_log = None
+                if i + 1 < len(claim.agent_logs) and claim.agent_logs[i + 1].get("type") == "agent_answer":
+                    answer_log = claim.agent_logs[i + 1]
+                    i += 1  # Skip the answer log since we're grouping it
+
+                messages.append({
+                    "type": "qa_exchange",
+                    "timestamp": log.get("timestamp"),
+                    "reviewer_id": log.get("reviewer_id"),
+                    "reviewer_name": log.get("reviewer_name"),
+                    "message": log.get("message"),
+                    "answer": answer_log.get("message") if answer_log else "No response received from agent."
+                })
+            elif log.get("type") in ["comment", "request_info"]:
                 messages.append({
                     "timestamp": log.get("timestamp"),
                     "reviewer_id": log.get("reviewer_id"),
@@ -452,6 +404,8 @@ async def get_review_messages(
                     "type": log.get("type"),
                     "message": log.get("message")
                 })
+
+            i += 1
 
     return {
         "claim_id": str(claim_id),
@@ -541,12 +495,8 @@ async def ask_agent(
 
         logger.info(f"Reviewer {request.reviewer_name} asking agent about claim {claim_id}: {request.question}")
 
-        # Get claim data directly from database (FIX: Don't rely on LlamaStack session)
-        ocr_text = ""
-        user_info = ""
-        contracts_info = ""
-
-        # 1. Get OCR text from claim_documents
+        # Build context using ContextBuilder
+        # 1. Get OCR data
         doc_result = await db.execute(
             select(models.ClaimDocument)
             .where(models.ClaimDocument.claim_id == claim_id)
@@ -555,22 +505,23 @@ async def ask_agent(
         )
         claim_doc = doc_result.scalar_one_or_none()
 
-        if claim_doc and claim_doc.raw_ocr_text:
-            ocr_text = claim_doc.raw_ocr_text[:2000]  # First 2000 chars
-            logger.info(f"Loaded OCR text ({len(claim_doc.raw_ocr_text)} chars) from claim_documents")
-        else:
-            logger.warning(f"No OCR text found for claim {claim_id}")
+        ocr_context = ""
+        if claim_doc:
+            ocr_context = context_builder.extract_ocr_context({
+                "raw_ocr_text": claim_doc.raw_ocr_text,
+                "structured_data": claim_doc.structured_data
+            })
 
-        # 2. Get user info
+        # 2. Get user and contract info
         user_result = await db.execute(
             select(models.User).where(models.User.user_id == claim.user_id)
         )
         user = user_result.scalar_one_or_none()
 
+        user_info = ""
         if user:
             user_info = f"User: {user.full_name or 'N/A'}, UserID: {user.user_id}, Email: {user.email or 'N/A'}"
 
-            # 3. Get user contracts
             contracts_result = await db.execute(
                 select(models.UserContract)
                 .where(models.UserContract.user_id == claim.user_id)
@@ -579,135 +530,45 @@ async def ask_agent(
             contracts = contracts_result.scalars().all()
 
             if contracts:
-                contracts_info = f"{len(contracts)} active contract(s)"
                 contract_details = []
                 for contract in contracts:
                     contract_details.append(
                         f"Contract {contract.contract_number}: {contract.contract_type or 'N/A'}, "
                         f"Coverage: ${contract.coverage_amount or 0}"
                     )
-                contracts_info += " - " + "; ".join(contract_details[:3])  # Max 3 contracts
+                user_info += "\nContracts: " + "; ".join(contract_details[:3])
         else:
-            user_info = f"UserID: {claim.user_id} (no user details found)"
+            user_info = f"UserID: {claim.user_id}"
 
-        # Build prompt for agent
-        context_prompt = f"""You are a claims processing assistant helping a human reviewer make a decision.
+        # Build review context
+        context = context_builder.build_review_context(
+            entity_type="claim",
+            entity_id=str(claim_id),
+            entity_data={
+                "claim_number": claim.claim_number,
+                "claim_type": claim.claim_type or "N/A",
+                "status": claim.status.value if hasattr(claim.status, 'value') else claim.status,
+                "user_info": user_info,
+                "ocr_data": ocr_context if ocr_context else "N/A"
+            }
+        )
 
-CLAIM INFORMATION:
-- Claim ID: {claim_id}
-- Claim Number: {claim.claim_number}
-- Claim Type: {claim.claim_type or 'N/A'}
-- Status: {claim.status}
-- User Info: {user_info or 'Not available'}
-- Contracts: {contracts_info or 'Not available'}
+        # Add reviewer question to context
+        full_question = f"{context}\n\n**Reviewer Question:** {request.question}"
 
-DOCUMENT TEXT (OCR):
-{ocr_text or 'Document not yet processed'}
-
-REVIEWER QUESTION:
-{request.question}
-
-Please provide a detailed, helpful answer to the reviewer's question. Focus on facts from the claim data and be concise but thorough."""
-
-        # Call LlamaStack agent
-        async with httpx.AsyncClient(timeout=60.0) as http_client:
-            # Create a temporary agent for Q&A
-            agent_response = await http_client.post(
-                f"{settings.llamastack_endpoint}/v1/agents",
-                json={
-                    "agent_config": {
-                        "model": settings.llamastack_default_model,
-                        "instructions": "You are a helpful claims processing assistant. Answer questions about insurance claims accurately and concisely.",
-                        "enable_session_persistence": False,
-                        "toolgroups": [],
-                        "sampling_params": {
-                            "strategy": {"type": "greedy"},
-                            "max_tokens": 1024
-                        }
-                    }
+        # Create temporary agent and ask question
+        answer = await review_service.ask_agent_standalone(
+            question=full_question,
+            agent_config={
+                "model": settings.llamastack_default_model,
+                "instructions": "You are a helpful claims processing assistant. Answer questions about insurance claims accurately and concisely.",
+                "enable_session_persistence": False,
+                "sampling_params": {
+                    "strategy": {"type": "greedy"},
+                    "max_tokens": 1024
                 }
-            )
-
-            if agent_response.status_code != 200:
-                raise HTTPException(status_code=500, detail=f"Failed to create agent: {agent_response.text}")
-
-            agent_id = agent_response.json()["agent_id"]
-            logger.info(f"Created Q&A agent: {agent_id}")
-
-            # Create session
-            session_response = await http_client.post(
-                f"{settings.llamastack_endpoint}/v1/agents/{agent_id}/session",
-                json={"session_name": f"qa_{claim_id}"}
-            )
-
-            if session_response.status_code != 200:
-                raise HTTPException(status_code=500, detail=f"Failed to create session: {session_response.text}")
-
-            session_id = session_response.json()["session_id"]
-            logger.info(f"Created Q&A session: {session_id}")
-
-            # Execute turn
-            answer = ""
-            async with http_client.stream(
-                "POST",
-                f"{settings.llamastack_endpoint}/v1/agents/{agent_id}/session/{session_id}/turn",
-                json={
-                    "messages": [{"role": "user", "content": context_prompt}],
-                    "stream": True
-                },
-                timeout=60.0
-            ) as response:
-                if response.status_code != 200:
-                    raise HTTPException(status_code=500, detail=f"Failed to execute turn: {response.text}")
-
-                async for line in response.aiter_lines():
-                    if not line.strip() or not line.startswith("data: "):
-                        continue
-
-                    data = line[6:]  # Remove "data: " prefix
-                    try:
-                        event = json.loads(data)
-                        if not isinstance(event, dict) or "event" not in event:
-                            continue
-
-                        payload = event["event"].get("payload", {})
-                        step_type = payload.get("step_type")
-                        event_type = payload.get("event_type")
-
-                        # Collect inference text
-                        if step_type == "inference":
-                            if event_type == "step_progress":
-                                step_details = payload.get("step_details", {})
-                                text_delta = step_details.get("text_delta", "")
-                                if text_delta:
-                                    answer += text_delta
-                            elif event_type == "step_complete":
-                                step_details = payload.get("step_details", {})
-                                model_response = step_details.get("model_response", {})
-                                content = model_response.get("content", "")
-                                if content and not answer:
-                                    answer = content
-
-                        # Turn complete
-                        elif event_type == "turn_complete":
-                            if not answer:
-                                turn_response = payload.get("turn", {})
-                                output_message = turn_response.get("output_message", {})
-                                content = output_message.get("content", "")
-                                if content:
-                                    answer = content
-
-                    except json.JSONDecodeError:
-                        continue
-
-            # Delete temporary agent (cleanup)
-            try:
-                await http_client.delete(f"{settings.llamastack_endpoint}/v1/agents/{agent_id}")
-            except:
-                pass  # Ignore cleanup errors
-
-        if not answer:
-            answer = "I apologize, but I couldn't generate a response. Please try again or contact support."
+            }
+        )
 
         logger.info(f"Agent response ({len(answer)} chars): {answer[:200]}...")
 

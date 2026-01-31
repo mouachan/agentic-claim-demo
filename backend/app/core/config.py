@@ -75,6 +75,10 @@ class Settings(BaseSettings):
         "http://claims-guardrails.claims-demo.svc.cluster.local:8080"
     )
 
+    # Guardrails/Shields Configuration
+    enable_pii_detection: bool = False  # Set to True to enable PII detection via shields
+    pii_shield_id: str = "pii_detector"  # LlamaStack shield ID for PII detection
+
     # CORS - default to restrictive, override in production via env vars
     cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8080"]
     cors_allow_credentials: bool = True

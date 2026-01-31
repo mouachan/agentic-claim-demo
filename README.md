@@ -158,22 +158,23 @@ export REGISTRY=quay.io/your-org
 
 # Build all images
 cd /path/to/agentic-claim-demo
-./scripts/build-all-images.sh $REGISTRY v1.3
+./scripts/build-all-images.sh $REGISTRY latest
 
 # Or build individually:
-podman build -t $REGISTRY/backend:v1.3 -f backend/Dockerfile .
-podman build -t $REGISTRY/frontend:v1.3 frontend/
-podman build -t $REGISTRY/ocr-server:v1.3 backend/mcp_servers/ocr_server/
-podman build -t $REGISTRY/rag-server:v1.3 backend/mcp_servers/rag_server/
-podman build -t $REGISTRY/hfcli:v1.3 backend/hfcli/
-podman build -t $REGISTRY/postgresql-pgvector:latest database/
+podman build --platform linux/amd64 -t $REGISTRY/backend:latest -f backend/Dockerfile .
+cd frontend && npm run build && cd ..
+podman build --platform linux/amd64 -t $REGISTRY/frontend:latest -f frontend/Dockerfile.production frontend/
+podman build --platform linux/amd64 -t $REGISTRY/ocr-server:latest backend/mcp_servers/ocr_server/
+podman build --platform linux/amd64 -t $REGISTRY/rag-server:latest backend/mcp_servers/rag_server/
+podman build --platform linux/amd64 -t $REGISTRY/hfcli:latest backend/hfcli/
+podman build --platform linux/amd64 -t $REGISTRY/postgresql-pgvector:latest database/
 
 # Push all images
-podman push $REGISTRY/backend:v1.3
-podman push $REGISTRY/frontend:v1.3
-podman push $REGISTRY/ocr-server:v1.3
-podman push $REGISTRY/rag-server:v1.3
-podman push $REGISTRY/hfcli:v1.3
+podman push $REGISTRY/backend:latest
+podman push $REGISTRY/frontend:latest
+podman push $REGISTRY/ocr-server:latest
+podman push $REGISTRY/rag-server:latest
+podman push $REGISTRY/hfcli:latest
 podman push $REGISTRY/postgresql-pgvector:latest
 ```
 
@@ -193,7 +194,7 @@ Edit `values-mydeployment.yaml`:
 backend:
   image:
     repository: quay.io/your-org/backend
-    tag: v1.3
+    tag: latest
 
 # Set cluster domain for model endpoints
 inference:
@@ -493,18 +494,38 @@ Build script for all images:
 
 Or manually:
 ```bash
-# Backend
-podman build -t quay.io/your-org/backend:v1.3 -f backend/Dockerfile .
+# Backend (build from parent directory for correct COPY paths)
+cd /path/to/agentic-claim-demo
+podman build --platform linux/amd64 \
+  -t quay.io/your-org/backend:latest \
+  -f backend/Dockerfile .
 
-# Frontend (with SSL workaround if needed)
-podman build -t quay.io/your-org/frontend:v1.3 \
-  --build-arg NPM_CONFIG_STRICT_SSL=false \
-  frontend/
+# Frontend (must build sources first, then use production Dockerfile)
+cd frontend
+npm run build  # Creates dist/ folder
+podman build --platform linux/amd64 \
+  -t quay.io/your-org/frontend:latest \
+  -f Dockerfile.production .
 
 # MCP Servers
-podman build -t quay.io/your-org/ocr-server:v1.3 backend/mcp_servers/ocr_server/
-podman build -t quay.io/your-org/rag-server:v1.3 backend/mcp_servers/rag_server/
+podman build --platform linux/amd64 \
+  -t quay.io/your-org/ocr-server:latest \
+  backend/mcp_servers/ocr_server/
+podman build --platform linux/amd64 \
+  -t quay.io/your-org/rag-server:latest \
+  backend/mcp_servers/rag_server/
+
+# Push to registry
+podman push quay.io/your-org/backend:latest
+podman push quay.io/your-org/frontend:latest
+podman push quay.io/your-org/ocr-server:latest
+podman push quay.io/your-org/rag-server:latest
 ```
+
+**Important Notes:**
+- **Backend**: Must build from parent directory because Dockerfile references `backend/requirements.txt` and `backend/app`
+- **Frontend**: Must run `npm run build` first to create `dist/` folder, then use `Dockerfile.production` which serves the built static files with nginx
+- **Platform**: Use `--platform linux/amd64` for OpenShift compatibility
 
 ## Troubleshooting
 

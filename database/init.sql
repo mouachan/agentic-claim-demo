@@ -72,6 +72,7 @@ CREATE TABLE claim_documents (
 
 CREATE INDEX idx_claim_documents_claim_id ON claim_documents(claim_id);
 CREATE INDEX idx_claim_documents_embedding ON claim_documents USING ivfflat (embedding vector_cosine_ops);
+ALTER TABLE claim_documents ADD CONSTRAINT claim_documents_claim_id_unique UNIQUE (claim_id);
 
 -- ============================================================================
 -- USER CONTRACTS TABLE (with embeddings for RAG)

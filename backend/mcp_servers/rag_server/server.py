@@ -267,6 +267,9 @@ async def retrieve_user_info(
     Returns:
         JSON string with user info and contracts
     """
+    import time
+    start_time = time.time()
+
     logger.info(f"Retrieving user info for: {user_id}")
 
     # Input validation
@@ -275,7 +278,7 @@ async def retrieve_user_info(
             "success": False,
             "error": "user_id is required"
         })
-    
+
     user_id = user_id.strip()
     top_k = min(max(1, top_k), 50)  # Clamp between 1 and 50
 
@@ -363,18 +366,22 @@ async def retrieve_user_info(
 
         logger.info(f"Retrieved {len(contracts)} contracts for user {user_id}")
 
+        processing_time = time.time() - start_time
         return json.dumps({
             "success": True,
             "user_info": user_info,
             "contracts": contracts,
-            "total_contracts": len(contracts)
+            "total_contracts": len(contracts),
+            "processing_time_seconds": round(processing_time, 2)
         }, default=str)  # default=str handles any remaining non-serializable types
 
     except Exception as e:
         logger.error(f"Error retrieving user info: {str(e)}", exc_info=True)
+        processing_time = time.time() - start_time
         return json.dumps({
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "processing_time_seconds": round(processing_time, 2)
         })
 
 
@@ -400,6 +407,9 @@ async def retrieve_similar_claims(
     Returns:
         JSON string with similar claims
     """
+    import time
+    start_time = time.time()
+
     logger.info(f"Searching for similar claims (top_k={top_k}, min_similarity={min_similarity})")
 
     # Input validation
@@ -408,7 +418,7 @@ async def retrieve_similar_claims(
             "success": False,
             "error": "claim_text is required"
         })
-    
+
     claim_text = claim_text.strip()
     top_k = min(max(1, top_k), 100)  # Clamp between 1 and 100
     min_similarity = min(max(0.0, min_similarity), 1.0)  # Clamp between 0 and 1
@@ -466,6 +476,7 @@ async def retrieve_similar_claims(
 
         logger.info(f"Found {len(similar_claims)} similar claims")
 
+        processing_time = time.time() - start_time
         return json.dumps({
             "success": True,
             "similar_claims": similar_claims,
@@ -474,14 +485,17 @@ async def retrieve_similar_claims(
                 "top_k": top_k,
                 "min_similarity": min_similarity,
                 "claim_type": claim_type
-            }
+            },
+            "processing_time_seconds": round(processing_time, 2)
         })
 
     except Exception as e:
         logger.error(f"Error retrieving similar claims: {str(e)}", exc_info=True)
+        processing_time = time.time() - start_time
         return json.dumps({
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "processing_time_seconds": round(processing_time, 2)
         })
 
 
@@ -505,6 +519,9 @@ async def search_knowledge_base(
     Returns:
         JSON string with knowledge base articles
     """
+    import time
+    start_time = time.time()
+
     logger.info(f"Searching knowledge base: {query}")
 
     # Input validation
@@ -513,7 +530,7 @@ async def search_knowledge_base(
             "success": False,
             "error": "query is required"
         })
-    
+
     query = query.strip()
     top_k = min(max(1, top_k), 50)  # Clamp between 1 and 50
 
@@ -559,6 +576,7 @@ async def search_knowledge_base(
 
         logger.info(f"Found {len(kb_results)} knowledge base articles")
 
+        processing_time = time.time() - start_time
         return json.dumps({
             "success": True,
             "articles": kb_results,
@@ -567,14 +585,17 @@ async def search_knowledge_base(
                 "query": query,
                 "top_k": top_k,
                 "category": category
-            }
+            },
+            "processing_time_seconds": round(processing_time, 2)
         })
 
     except Exception as e:
         logger.error(f"Error searching knowledge base: {str(e)}", exc_info=True)
+        processing_time = time.time() - start_time
         return json.dumps({
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "processing_time_seconds": round(processing_time, 2)
         })
 
 

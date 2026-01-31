@@ -30,11 +30,11 @@ export interface ProcessingStepLog {
   step_name: string
   agent_name: string
   status: string
-  duration_ms: number
-  started_at: string
-  completed_at?: string
+  duration_ms?: number | null
+  started_at?: string | null
+  completed_at?: string | null
   output_data?: Record<string, any>
-  error_message?: string
+  error_message?: string | null
 }
 
 export interface ClaimStatusResponse {
