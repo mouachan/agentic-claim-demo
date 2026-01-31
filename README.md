@@ -26,12 +26,14 @@ This demo showcases an end-to-end agentic workflow for insurance claims processi
 
 ### Key Features
 
-- ✅ **Agentic Workflow**: LlamaStack ReActAgent with thought-action-observation loops
+- ✅ **Agentic Workflow**: LlamaStack Responses API with automatic tool execution
 - 🔧 **MCP Tools**: Custom OCR and RAG servers using Model Context Protocol
 - 🤖 **AI Models**: Llama 3.3 70B (reasoning) + Gemma 300M (embeddings)
 - 📄 **OCR**: Fast document processing (2-4s per document) with EasyOCR
 - 🔍 **RAG**: Vector similarity search with PostgreSQL pgvector
-- 🛡️ **Guardrails**: Optional PII detection and content safety
+- 🛡️ **PII Detection**: TrustyAI Guardrails with LlamaStack shields integration
+- 👤 **HITL**: Human-in-the-Loop review with Ask Agent for manual review cases
+- 🏗️ **Service Architecture**: Clean separation of business logic and API layers
 - 🚀 **Production-Ready**: Helm deployment with MinIO + Data Science Pipelines
 
 ## Architecture
@@ -112,6 +114,99 @@ graph TB
 - **Kubeflow Pipelines v2**: Data Science Pipelines (DSPA)
 - **MinIO**: S3-compatible object storage
 - **Helm 3.x**: Package management
+
+## Workflows
+
+### Automated Claim Processing
+
+The system processes claims through an intelligent multi-step workflow:
+
+1. **OCR Processing** (`ocr_document` MCP tool)
+   - Extract text and structured data from PDF documents
+   - Process in 2-4 seconds per document
+   - Store raw OCR text and confidence scores
+
+2. **User Information Retrieval** (`retrieve_user_info` MCP tool)
+   - Vector search through user contracts using embeddings
+   - Retrieve coverage limits, deductibles, and policy terms
+   - Rank contracts by relevance to claim
+
+3. **Similar Claims Analysis** (`retrieve_similar_claims` MCP tool)
+   - Find historical claims with similar characteristics
+   - Use vector similarity search on claim embeddings
+   - Provide precedents and patterns for decision-making
+
+4. **Knowledge Base Search** (`search_knowledge_base` MCP tool)
+   - Query policy documents and guidelines
+   - Retrieve relevant clauses and procedures
+   - Support decision with authoritative sources
+
+5. **Automated Decision**
+   - LlamaStack agent analyzes all gathered information
+   - Generates structured recommendation (approve/deny/manual_review)
+   - Provides confidence score and reasoning
+   - Stores decision with full audit trail
+
+### PII Detection (Post-Processing)
+
+After claim processing completes, the system runs PII detection:
+
+- **TrustyAI Guardrails Shield**: Detects sensitive information in OCR and RAG outputs
+- **Detection Types**: Email addresses, phone numbers, dates of birth, license plates
+- **Non-Blocking**: Logs detections without blocking claim processing
+- **Audit Trail**: Records in `guardrails_detections` table with:
+  - Source step (OCR, RAG retrieval)
+  - Detected fields
+  - Confidence scores
+  - Action taken (logged, flagged, etc.)
+
+### Human-in-the-Loop (HITL) Review
+
+For claims requiring manual review:
+
+1. **Manual Review Interface**
+   - Claims with `manual_review` status display review panel
+   - Shows system decision, confidence, and reasoning
+   - Displays all processing steps and outputs
+
+2. **Ask Agent Feature**
+   - Reviewers can ask clarifying questions to the AI agent
+   - Agent provides context-aware answers using claim data
+   - Full conversation history maintained in `agent_logs`
+
+3. **Final Decision**
+   - Reviewer approves or denies with notes
+   - System tracks both initial AI decision and final human decision
+   - Preserves full decision history:
+     - Initial decision (system)
+     - Final decision (reviewer)
+     - Decision maker and timestamp
+     - Review notes
+
+### Service Architecture
+
+The backend uses a clean service-oriented architecture:
+
+```
+app/
+├── api/                    # FastAPI endpoints (thin layer)
+│   ├── claims.py          # Claim operations
+│   └── hitl.py            # Manual review endpoints
+├── services/              # Business logic layer
+│   ├── claim_service.py   # Claim processing orchestration
+│   └── agent/             # AI agent services
+│       ├── responses_orchestrator.py  # LlamaStack Responses API
+│       ├── context_builder.py         # Build processing contexts
+│       ├── response_parser.py         # Parse AI responses
+│       └── reviewer.py                # HITL review logic
+└── models/                # Database models (SQLAlchemy)
+```
+
+**Benefits**:
+- Clear separation of concerns
+- Testable business logic
+- Reusable agent components
+- Easy to mock for testing
 
 ## Prerequisites
 
@@ -423,18 +518,63 @@ The chart uses hooks for:
 
 Hook weights control execution order (lower runs first).
 
-### Guardrails (Optional)
+### PII Detection with TrustyAI Guardrails
 
-Enable PII detection and content safety:
+**Current Implementation**:
 
-```yaml
-guardrails:
-  enabled: true
+The system uses TrustyAI Guardrails Orchestrator with LlamaStack shields for PII detection:
+
+1. **Shield Configuration**:
+   ```yaml
+   # In backend config
+   enable_pii_detection: true
+   pii_shield_id: "pii_detector"
+   ```
+
+2. **TrustyAI Guardrails Orchestrator**:
+   - Deployed as Custom Resource (CR)
+   - FMS provider with built-in regex detectors
+   - Detects: emails, phones, dates of birth, license plates
+   - Self-signed certificates require `verify_ssl: false`
+
+3. **LlamaStack Shield Integration**:
+   - Register shield via LlamaStack API
+   - Shield called post-processing (non-blocking)
+   - Results stored in `guardrails_detections` table
+
+4. **Detection Workflow**:
+   ```
+   Claim Processing → Extract OCR + RAG data
+   → Call PII shield → Parse detections
+   → Store in DB → Display in frontend
+   ```
+
+**Configuration**:
+```python
+# backend/app/core/config.py
+enable_pii_detection: bool = True  # Enable/disable PII detection
+pii_shield_id: str = "pii_detector"  # Shield ID in LlamaStack
 ```
 
-Deploys:
-- Llama Guard 3 1B (content safety)
-- Granite Guardian 3.1 2B (PII detection)
+**Detection Record**:
+```json
+{
+  "detection_type": "EMAIL_ADDRESS",
+  "severity": "medium",
+  "action_taken": "logged",
+  "record_metadata": {
+    "source_step": "retrieve_user_info (RAG)",
+    "detected_fields": ["email", "phone"],
+    "score": 0.95,
+    "text": "john@example.com"
+  }
+}
+```
+
+**Future Enhancements**:
+- Content safety with Llama Guard 3 1B
+- Automatic masking/redaction
+- Configurable severity-based actions
 
 ## Development
 
@@ -674,6 +814,26 @@ GET /claims/{id}/status
 
 # Get decision
 GET /claims/{id}/decision
+
+# Get PII detections
+GET /claims/{id}/guardrails
+
+# Manual Review (HITL) endpoints
+GET /claims/{id}/messages
+POST /claims/{id}/ask
+{
+  "question": "What is the coverage amount?",
+  "reviewer_id": "reviewer_001",
+  "reviewer_name": "John Doe"
+}
+
+POST /claims/{id}/action
+{
+  "action": "approve",  # or "deny"
+  "reviewer_id": "reviewer_001",
+  "reviewer_name": "John Doe",
+  "notes": "Approved based on policy coverage"
+}
 ```
 
 ### MCP Protocol Endpoints
@@ -736,11 +896,32 @@ agentic-claim-demo/
 - **Context**: 20K tokens
 - **Memory**: ~24-26GB per GPU
 
+### Database Schema
+
+**Core Tables**:
+- `claims`: Main claims table with status, metadata, agent_logs
+- `claim_documents`: OCR results with embeddings (vector 768)
+- `claim_decisions`: System and final decisions with full history
+- `users`: User information
+- `user_contracts`: Insurance contracts
+
+**RAG Tables**:
+- `knowledge_base`: Policy documents with embeddings (vector 768)
+
+**Compliance Tables**:
+- `guardrails_detections`: PII detection logs with metadata
+- `processing_logs`: Step-by-step processing audit trail
+
+**Vector Indexes**:
+- `claim_documents.embedding`: IVFFlat index for similar claims search
+- `knowledge_base.embedding`: IVFFlat index for policy search
+
 ### Database Optimization
 
-- **pgvector HNSW Index**: Fast similarity search
+- **pgvector HNSW/IVFFlat Index**: Fast similarity search
 - **Connection Pooling**: 10 connections, 20 max
 - **Async Operations**: Non-blocking queries
+- **JSONB Indexes**: Fast metadata queries
 
 ### OCR Performance
 
@@ -755,6 +936,51 @@ agentic-claim-demo/
 - **RBAC**: Helm creates necessary ServiceAccounts
 - **PII Protection**: Optional guardrails for sensitive data
 - **Input Validation**: Pydantic schemas
+
+## Known Issues
+
+### Embeddings
+
+**Knowledge Base Embeddings Missing**
+- **Status**: 0/15 knowledge base entries have embeddings generated
+- **Impact**: `search_knowledge_base` tool returns no results
+- **Cause**: Pipeline KFP created data but didn't generate embeddings
+- **Workaround**: Run embedding generation job for knowledge_base table
+- **Fix**: Add knowledge base to `generate_embeddings_job.py` or create separate job
+
+**Similar Claims Returns Zero Results**
+- **Status**: `retrieve_similar_claims` always returns 0 results
+- **Impact**: Agent cannot find historical precedents
+- **Context**: 10 claim_documents have valid embeddings, but search returns nothing
+- **Investigation needed**:
+  - Verify agent passes correct text to tool
+  - Check if current claim needs to be excluded from results
+  - Test similarity query directly in PostgreSQL
+  - Add detailed logging to RAG server
+
+### Manual Review
+
+**System Reasoning Sometimes N/A**
+- **Status**: Some decisions show "N/A" reasoning with 0.0% confidence
+- **Cause**: Decision parsing may not handle all response formats
+- **Workaround**: Check raw response in processing logs
+- **Fix**: Improve response_parser.py to handle edge cases
+
+### Current Version: v1.7.1
+
+**Recent Changes**:
+- ✅ Fixed 409 Conflict error (now returns 202 Accepted)
+- ✅ Fixed Ask Agent endpoint breaking
+- ✅ Improved PII detection with source_step and detected_fields
+- ✅ Enhanced decision parsing for multiple JSON formats
+- ✅ Added service layer refactoring
+
+**Verified Working**:
+- ✅ Claim processing with OCR + RAG
+- ✅ PII detection and logging
+- ✅ Ask Agent in manual review
+- ✅ Decision persistence (system + final)
+- ✅ Message grouping (qa_exchange)
 
 ## Contributing
 
