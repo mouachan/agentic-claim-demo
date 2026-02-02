@@ -4,7 +4,7 @@
 # =============================================================================
 global:
   # OpenShift cluster domain (replace with your cluster domain)
-  clusterDomain: "apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com"
+  clusterDomain: "apps.cluster-xxxxx.xxxxx.sandboxYYYY.opentlc.com"  # Replace with your cluster domain
 
   # Namespace where all resources will be deployed
   namespace: claims-demo
@@ -108,7 +108,7 @@ postgresql:
   # Resources
   resources:
     requests:
-      cpu: 500m
+      cpu: 250m
       memory: 1Gi
     limits:
       cpu: 2000m
@@ -124,6 +124,7 @@ postgresql:
 # =============================================================================
 llamastack:
   enabled: true
+  fromRhoai: true  # Use RHOAI LlamaStack service name
 
   # Route (OpenShift)
   route:
@@ -476,7 +477,7 @@ dataSciencePipelines:
 # Guardrails (TrustyAI)
 # =============================================================================
 guardrails:
-  enabled: false  # Disabled by default - requires RHOAI 3.0+ with TrustyAI operator
+  enabled: true  # Enable PII detection with TrustyAI guardrails
 
   name: claims-guardrails
   configMapName: claims-guardrails-config
@@ -497,19 +498,12 @@ guardrails:
 
   # Detector configurations for ConfigMap
   detectors:
-    hap:
-      hostname: claims-guardrails-service.claims-demo.svc.cluster.local
-      port: 8080
-      chunkerId: whole_doc_chunker
+    regex:
       threshold: 0.5
-      enabled: true
-
+    hap:
+      threshold: 0.5
     pii:
-      hostname: claims-guardrails-service.claims-demo.svc.cluster.local
-      port: 8080
-      chunkerId: whole_doc_chunker
       threshold: 0.7
-      enabled: true
 
     # Llama Guard 3 1B detector InferenceService
     llamaGuard:

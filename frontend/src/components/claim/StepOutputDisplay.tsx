@@ -63,75 +63,78 @@ export default function StepOutputDisplay({ stepName, outputData }: StepOutputDi
     const hasContracts = contracts.length > 0
 
     return (
-      <div className="mt-3 bg-indigo-50 p-4 rounded-lg border border-indigo-200">
-        <p className="text-sm font-semibold text-indigo-900 mb-3">👤 User Information</p>
-
-        {/* User Info */}
-        {hasUserInfo ? (
-          <div className="space-y-2 mb-3">
-            {userInfo.user_id && (
-              <div>
-                <p className="text-xs text-gray-600">User ID</p>
-                <p className="text-sm font-medium text-gray-900">{userInfo.user_id}</p>
-              </div>
-            )}
-            {userInfo.email && (
-              <div>
-                <p className="text-xs text-gray-600">Email</p>
-                <p className="text-sm font-medium text-gray-900">{userInfo.email}</p>
-              </div>
-            )}
-            {userInfo.phone_number && (
-              <div>
-                <p className="text-xs text-gray-600">Phone</p>
-                <p className="text-sm font-medium text-gray-900">{userInfo.phone_number}</p>
-              </div>
-            )}
-            {userInfo.date_of_birth && (
-              <div>
-                <p className="text-xs text-gray-600">Date of Birth</p>
-                <p className="text-sm font-medium text-gray-900">{userInfo.date_of_birth}</p>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-600 mb-3">No user information found</p>
-        )}
-
-        {/* Contracts */}
-        {hasContracts ? (
-          <div className="mt-3 pt-3 border-t border-indigo-300">
-            <p className="text-xs text-gray-600 mb-2">📄 Contracts: {contracts.length}</p>
-            <div className="space-y-2">
-              {contracts.slice(0, 3).map((contract: any, idx: number) => (
-                <div key={idx} className="bg-white p-2 rounded border border-indigo-100">
-                  <p className="text-sm font-semibold text-gray-900">
-                    {contract.contract_number || `Contract #${idx + 1}`}
-                  </p>
-                  {contract.contract_type && (
-                    <p className="text-xs text-gray-600">Type: {contract.contract_type}</p>
-                  )}
-                  {contract.coverage_amount && (
-                    <p className="text-xs text-gray-600">
-                      Coverage: ${Number(contract.coverage_amount).toLocaleString()}
-                    </p>
-                  )}
-                  {contract.is_active !== undefined && (
-                    <p className="text-xs text-indigo-700">
-                      Status: {contract.is_active ? 'Active' : 'Inactive'}
-                    </p>
-                  )}
+      <details className="mt-3 bg-indigo-50 p-3 rounded-lg border border-indigo-200">
+        <summary className="text-sm font-semibold text-indigo-900 cursor-pointer hover:text-indigo-700">
+          👤 User Information ({contracts.length} contract{contracts.length !== 1 ? 's' : ''})
+        </summary>
+        <div className="mt-3">
+          {/* User Info */}
+          {hasUserInfo ? (
+            <div className="space-y-2 mb-3">
+              {userInfo.user_id && (
+                <div>
+                  <p className="text-xs text-gray-600">User ID</p>
+                  <p className="text-sm font-medium text-gray-900">{userInfo.user_id}</p>
                 </div>
-              ))}
-              {contracts.length > 3 && (
-                <p className="text-xs text-gray-600 italic">+ {contracts.length - 3} more contracts</p>
+              )}
+              {userInfo.email && (
+                <div>
+                  <p className="text-xs text-gray-600">Email</p>
+                  <p className="text-sm font-medium text-gray-900">{userInfo.email}</p>
+                </div>
+              )}
+              {userInfo.phone_number && (
+                <div>
+                  <p className="text-xs text-gray-600">Phone</p>
+                  <p className="text-sm font-medium text-gray-900">{userInfo.phone_number}</p>
+                </div>
+              )}
+              {userInfo.date_of_birth && (
+                <div>
+                  <p className="text-xs text-gray-600">Date of Birth</p>
+                  <p className="text-sm font-medium text-gray-900">{userInfo.date_of_birth}</p>
+                </div>
               )}
             </div>
-          </div>
-        ) : (
-          !hasUserInfo && <p className="text-sm text-gray-600">No contracts found</p>
-        )}
-      </div>
+          ) : (
+            <p className="text-sm text-gray-600 mb-3">No user information found</p>
+          )}
+
+          {/* Contracts */}
+          {hasContracts ? (
+            <div className="mt-3 pt-3 border-t border-indigo-300">
+              <p className="text-xs text-gray-600 mb-2">📄 Contracts: {contracts.length}</p>
+              <div className="space-y-2">
+                {contracts.slice(0, 3).map((contract: any, idx: number) => (
+                  <div key={idx} className="bg-white p-2 rounded border border-indigo-100">
+                    <p className="text-sm font-semibold text-gray-900">
+                      {contract.contract_number || `Contract #${idx + 1}`}
+                    </p>
+                    {contract.contract_type && (
+                      <p className="text-xs text-gray-600">Type: {contract.contract_type}</p>
+                    )}
+                    {contract.coverage_amount && (
+                      <p className="text-xs text-gray-600">
+                        Coverage: ${Number(contract.coverage_amount).toLocaleString()}
+                      </p>
+                    )}
+                    {contract.is_active !== undefined && (
+                      <p className="text-xs text-indigo-700">
+                        Status: {contract.is_active ? 'Active' : 'Inactive'}
+                      </p>
+                    )}
+                  </div>
+                ))}
+                {contracts.length > 3 && (
+                  <p className="text-xs text-gray-600 italic">+ {contracts.length - 3} more contracts</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            !hasUserInfo && <p className="text-sm text-gray-600">No contracts found</p>
+          )}
+        </div>
+      </details>
     )
   }
 
@@ -140,42 +143,44 @@ export default function StepOutputDisplay({ stepName, outputData }: StepOutputDi
     const claims = outputData.claims || outputData.similar_claims || []
 
     return (
-      <div className="mt-3 bg-purple-50 p-4 rounded-lg border border-purple-200">
-        <p className="text-sm font-semibold text-purple-900 mb-3">
+      <details className="mt-3 bg-purple-50 p-3 rounded-lg border border-purple-200">
+        <summary className="text-sm font-semibold text-purple-900 cursor-pointer hover:text-purple-700">
           🔍 Similar Claims Found: {claims.length}
-        </p>
-        {claims.length > 0 ? (
-          <div className="space-y-2">
-            {claims.slice(0, 3).map((claim: any, idx: number) => (
-              <div key={idx} className="bg-white p-3 rounded border border-purple-100">
-                <p className="text-sm font-semibold text-gray-900">
-                  {claim.claim_number || `Claim #${idx + 1}`}
+        </summary>
+        <div className="mt-3">
+          {claims.length > 0 ? (
+            <div className="space-y-2">
+              {claims.slice(0, 3).map((claim: any, idx: number) => (
+                <div key={idx} className="bg-white p-3 rounded border border-purple-100">
+                  <p className="text-sm font-semibold text-gray-900">
+                    {claim.claim_number || `Claim #${idx + 1}`}
+                  </p>
+                  {claim.claim_type && (
+                    <p className="text-xs text-gray-600 mt-1">Type: {claim.claim_type}</p>
+                  )}
+                  {claim.decision && (
+                    <p className="text-xs text-gray-600">
+                      Decision: <span className="font-medium">{claim.decision}</span>
+                    </p>
+                  )}
+                  {claim.similarity_score && (
+                    <p className="text-xs text-purple-700">
+                      Match: {(claim.similarity_score * 100).toFixed(0)}%
+                    </p>
+                  )}
+                </div>
+              ))}
+              {claims.length > 3 && (
+                <p className="text-xs text-gray-600 italic">
+                  + {claims.length - 3} more similar claims
                 </p>
-                {claim.claim_type && (
-                  <p className="text-xs text-gray-600 mt-1">Type: {claim.claim_type}</p>
-                )}
-                {claim.decision && (
-                  <p className="text-xs text-gray-600">
-                    Decision: <span className="font-medium">{claim.decision}</span>
-                  </p>
-                )}
-                {claim.similarity_score && (
-                  <p className="text-xs text-purple-700">
-                    Match: {(claim.similarity_score * 100).toFixed(0)}%
-                  </p>
-                )}
-              </div>
-            ))}
-            {claims.length > 3 && (
-              <p className="text-xs text-gray-600 italic">
-                + {claims.length - 3} more similar claims
-              </p>
-            )}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-600">No similar claims found</p>
-        )}
-      </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-600">No similar claims found</p>
+          )}
+        </div>
+      </details>
     )
   }
 
@@ -184,39 +189,41 @@ export default function StepOutputDisplay({ stepName, outputData }: StepOutputDi
     const articles = outputData.articles || outputData.results || []
 
     return (
-      <div className="mt-3 bg-amber-50 p-4 rounded-lg border border-amber-200">
-        <p className="text-sm font-semibold text-amber-900 mb-3">
+      <details className="mt-3 bg-amber-50 p-3 rounded-lg border border-amber-200">
+        <summary className="text-sm font-semibold text-amber-900 cursor-pointer hover:text-amber-700">
           📚 Knowledge Base Results: {articles.length}
-        </p>
-        {articles.length > 0 ? (
-          <div className="space-y-2">
-            {articles.slice(0, 3).map((article: any, idx: number) => (
-              <div key={idx} className="bg-white p-3 rounded border border-amber-100">
-                <p className="text-sm font-semibold text-gray-900">
-                  {article.title || article.section || `Article ${idx + 1}`}
+        </summary>
+        <div className="mt-3">
+          {articles.length > 0 ? (
+            <div className="space-y-2">
+              {articles.slice(0, 3).map((article: any, idx: number) => (
+                <div key={idx} className="bg-white p-3 rounded border border-amber-100">
+                  <p className="text-sm font-semibold text-gray-900">
+                    {article.title || article.section || `Article ${idx + 1}`}
+                  </p>
+                  {article.content && (
+                    <p className="text-xs text-gray-600 mt-1 line-clamp-2">
+                      {article.content}
+                    </p>
+                  )}
+                  {article.relevance_score && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      Relevance: {(article.relevance_score * 100).toFixed(0)}%
+                    </p>
+                  )}
+                </div>
+              ))}
+              {articles.length > 3 && (
+                <p className="text-xs text-gray-600 italic">
+                  + {articles.length - 3} more articles
                 </p>
-                {article.content && (
-                  <p className="text-xs text-gray-600 mt-1 line-clamp-2">
-                    {article.content}
-                  </p>
-                )}
-                {article.relevance_score && (
-                  <p className="text-xs text-amber-700 mt-1">
-                    Relevance: {(article.relevance_score * 100).toFixed(0)}%
-                  </p>
-                )}
-              </div>
-            ))}
-            {articles.length > 3 && (
-              <p className="text-xs text-gray-600 italic">
-                + {articles.length - 3} more articles
-              </p>
-            )}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-600">No relevant articles found</p>
-        )}
-      </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-600">No relevant articles found</p>
+          )}
+        </div>
+      </details>
     )
   }
 

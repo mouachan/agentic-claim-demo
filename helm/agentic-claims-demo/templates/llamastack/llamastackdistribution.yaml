@@ -29,7 +29,7 @@ spec:
         - name: VLLM_API_TOKEN
           value: "fake"
         - name: VLLM_MAX_TOKENS
-          value: "16384"
+          value: "4096"
 
         # Remote embedding configuration
         - name: EMBEDDING_MODEL
@@ -67,6 +67,10 @@ spec:
               key: LLAMASTACK_PASSWORD
         - name: ENABLE_PGVECTOR
           value: "true"
+{{- if .Values.guardrails.enabled }}
+        - name: FMS_ORCHESTRATOR_URL
+          value: "https://guardrails-orchestrator-service.{{ include "agentic-claims-demo.namespace" . }}.svc.cluster.local:8032"
+{{- end }}
       name: llama-stack
       port: 8321
       resources:

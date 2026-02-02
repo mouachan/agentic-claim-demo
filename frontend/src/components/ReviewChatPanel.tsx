@@ -181,20 +181,10 @@ export default function ReviewChatPanel({
         throw new Error('Failed to ask agent')
       }
 
-      const data = await response.json()
+      await response.json()
 
-      // Add Q&A to messages (will also come via WebSocket but we show immediately)
-      setMessages(prev => [
-        ...prev.filter(m => m.message !== 'Asking agent...'), // Remove loading message
-        {
-          type: 'qa_exchange',
-          reviewer_id: reviewerId,
-          reviewer_name: reviewerName,
-          message: question,
-          answer: data.answer,
-          timestamp: data.timestamp
-        }
-      ])
+      // Don't add locally - will come via WebSocket broadcast to avoid duplication
+      setMessages(prev => prev.filter(m => m.message !== 'Asking agent...')) // Just remove loading message
 
       setCommentInput('')
     } catch (err) {

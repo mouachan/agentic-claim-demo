@@ -125,7 +125,16 @@ export default function ProcessingSteps({ claim, status, logs }: ProcessingSteps
                     {hasAnswer && (
                       <div className="p-3 bg-purple-50 rounded-lg border-l-4 border-purple-500 mt-2 ml-4">
                         <div className="text-xs text-purple-700 font-semibold mb-1">🤖 Agent Response</div>
-                        <div className="text-sm text-gray-800 whitespace-pre-wrap">{answerLog.message}</div>
+                        {answerLog.message.length > 300 ? (
+                          <details>
+                            <summary className="text-xs text-purple-600 cursor-pointer hover:text-purple-800 font-medium mb-1">
+                              View response ({answerLog.message.length} characters)
+                            </summary>
+                            <div className="text-sm text-gray-800 whitespace-pre-wrap mt-2">{answerLog.message}</div>
+                          </details>
+                        ) : (
+                          <div className="text-sm text-gray-800 whitespace-pre-wrap">{answerLog.message}</div>
+                        )}
                       </div>
                     )}
                   </div>

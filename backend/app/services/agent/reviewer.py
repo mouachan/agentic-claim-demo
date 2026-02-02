@@ -154,7 +154,7 @@ class ReviewService:
             )
 
             # Extract and clean response
-            response_content = result.get('response', {}).get('content', '')
+            response_content = result.get('output', '')
             answer = self.response_parser.parse_qa_response(response_content)
 
             logger.info(f"Standalone agent answered question ({len(answer)} chars)")
