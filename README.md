@@ -250,27 +250,46 @@ Build all container images and push to your registry:
 ```bash
 # Set your registry
 export REGISTRY=quay.io/your-org
+export TAG=v1.7.2
 
-# Build all images
+# Backend (build from parent directory for correct COPY paths)
 cd /path/to/agentic-claim-demo
-./scripts/build-all-images.sh $REGISTRY latest
+podman build --platform linux/amd64 \
+  -t $REGISTRY/backend:$TAG \
+  -f backend/Dockerfile .
+podman push $REGISTRY/backend:$TAG
 
-# Or build individually:
-podman build --platform linux/amd64 -t $REGISTRY/backend:latest -f backend/Dockerfile .
-cd frontend && npm run build && cd ..
-podman build --platform linux/amd64 -t $REGISTRY/frontend:latest -f frontend/Dockerfile.production frontend/
-podman build --platform linux/amd64 -t $REGISTRY/ocr-server:latest backend/mcp_servers/ocr_server/
-podman build --platform linux/amd64 -t $REGISTRY/rag-server:latest backend/mcp_servers/rag_server/
-podman build --platform linux/amd64 -t $REGISTRY/hfcli:latest backend/hfcli/
-podman build --platform linux/amd64 -t $REGISTRY/postgresql-pgvector:latest database/
+# Frontend (build sources first, then package with nginx)
+cd frontend
+npm run build
+podman build --platform linux/amd64 \
+  -t $REGISTRY/frontend:$TAG \
+  -f Dockerfile.production .
+podman push $REGISTRY/frontend:$TAG
+cd ..
 
-# Push all images
-podman push $REGISTRY/backend:latest
-podman push $REGISTRY/frontend:latest
-podman push $REGISTRY/ocr-server:latest
-podman push $REGISTRY/rag-server:latest
-podman push $REGISTRY/hfcli:latest
-podman push $REGISTRY/postgresql-pgvector:latest
+# MCP Servers
+podman build --platform linux/amd64 \
+  -t $REGISTRY/ocr-server:$TAG \
+  backend/mcp_servers/ocr_server/
+podman push $REGISTRY/ocr-server:$TAG
+
+podman build --platform linux/amd64 \
+  -t $REGISTRY/rag-server:$TAG \
+  backend/mcp_servers/rag_server/
+podman push $REGISTRY/rag-server:$TAG
+
+# Database with pgvector
+podman build --platform linux/amd64 \
+  -t $REGISTRY/postgresql-pgvector:$TAG \
+  database/
+podman push $REGISTRY/postgresql-pgvector:$TAG
+
+# HuggingFace CLI helper
+podman build --platform linux/amd64 \
+  -t $REGISTRY/hfcli:$TAG \
+  backend/hfcli/
+podman push $REGISTRY/hfcli:$TAG
 ```
 
 ### 2. Configure Values
@@ -311,25 +330,7 @@ dataSciencePipelines:
   enabled: true
 ```
 
-### 3. Deploy AI Models
-
-Before deploying the application, deploy the AI models:
-
-```bash
-# Deploy Llama 3.3 70B (vLLM)
-cd openshift/deployments/llama-3-3-70B
-./deploy.sh
-
-# Deploy Gemma 300M (Embeddings)
-cd ../gemma-300m-embeddings
-./deploy.sh
-
-# Wait for models to be ready (~10 minutes)
-oc wait --for=condition=ready pod -l app=llama-3-3-70b-predictor -n llama-3-3-70b --timeout=900s
-oc wait --for=condition=ready pod -l app=gemma-predictor -n embeddinggemma-300m --timeout=600s
-```
-
-### 4. Install with Helm
+### 3. Install with Helm
 
 Deploy the complete stack:
 
@@ -350,7 +351,7 @@ helm upgrade agentic-claims-demo . \
   --timeout=30m
 ```
 
-### 5. Verify Deployment
+### 4. Verify Deployment
 
 Wait for all components to be ready:
 
@@ -377,7 +378,9 @@ oc get dspa -n claims-demo
 oc get routes -n claims-demo
 ```
 
-### 6. Access the Application
+**Note**: The Helm chart automatically deploys the AI models (Llama 3.3 70B and Gemma 300M) as InferenceServices. This process takes approximately 10-15 minutes during first deployment while models are downloaded.
+
+### 5. Access the Application
 
 ```bash
 # Frontend URL
@@ -388,6 +391,18 @@ echo "Backend: http://$(oc get route backend -n claims-demo -o jsonpath='{.spec.
 
 # MinIO Console (optional)
 echo "MinIO: http://$(oc get route agentic-claims-demo-minio-console -n claims-demo -o jsonpath='{.spec.host}')"
+```
+
+### 6. Generate Embeddings
+
+After the first deployment, you need to generate embeddings for the knowledge base and claims:
+
+```bash
+# Access Data Science Pipelines UI in OpenShift
+# Upload pipelines/data_initialization_pipeline.yaml
+# Run the pipeline to generate all embeddings
+# Wait ~10-15 minutes for completion
+# Verify: KB 15/15, Claims 90/90 with embeddings
 ```
 
 ### 7. Test with Demo Claims

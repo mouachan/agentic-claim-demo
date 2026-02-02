@@ -260,6 +260,10 @@ backend:
     DEBUG: "false"
     LOG_LEVEL: "INFO"
 
+  # Admin & Database Reset
+  # URL to seed data SQL file (configure to point to your GitHub repository)
+  seedDataUrl: "https://raw.githubusercontent.com/mouachan/agentic-claim-demo/refactor/v1.5-architecture/database/seed_data/001_sample_data.sql"
+
   # Resources
   resources:
     requests:

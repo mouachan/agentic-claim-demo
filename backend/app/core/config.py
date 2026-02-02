@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     default_workflow_type: str = "standard"
     enable_async_processing: bool = True
 
+    # Admin & Database Reset
+    # Configure this to point to your GitHub repository branch
+    # Example: https://raw.githubusercontent.com/your-org/agentic-claim-demo/main/database/seed_data/001_sample_data.sql
+    seed_data_url: str = ""  # Must be set via SEED_DATA_URL env var
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "json"
