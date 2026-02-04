@@ -573,28 +573,52 @@ RAG_SERVER_URL: http://rag-server.claims-demo.svc.cluster.local:8080
 GUARDRAILS_SERVER_URL: https://guardrails-orchestrator-service.claims-demo.svc.cluster.local:8032
 ENABLE_PII_DETECTION: true
 
-# Database
-DATABASE_URL: postgresql+asyncpg://claims_user:***@postgresql.claims-demo.svc.cluster.local:5432/claims_db
+# Database (from Secret postgresql-secret)
+POSTGRES_HOST: postgresql
+POSTGRES_PORT: 5432
+POSTGRES_USER: claims_user
+POSTGRES_PASSWORD: ***
+POSTGRES_DATABASE: claims_db
+
+# Note: DATABASE_URL is constructed automatically from these variables
+# as postgresql+asyncpg://user:pass@host:port/database
 ```
 
-**Modify**:
+**Modify ConfigMap**:
 ```bash
 oc edit configmap backend-config -n claims-demo
 oc rollout restart deployment/backend -n claims-demo
 ```
 
-### Frontend Environment Variables
-
-Frontend configuration built into image at build time.
-
-**Key Variables** (during build):
-
+**Modify Secret** (database credentials):
 ```bash
-REACT_APP_BACKEND_URL=http://backend.claims-demo.svc.cluster.local:8000
-REACT_APP_ENV=production
+oc edit secret postgresql-secret -n claims-demo
+oc rollout restart deployment/backend -n claims-demo
 ```
 
-**Note**: Frontend env vars are baked into the build. To change, rebuild the image.
+### Frontend Configuration
+
+Frontend uses **nginx reverse proxy** for backend communication - no environment variables needed.
+
+**How it works**:
+
+1. Frontend code calls API at `/api/v1/...` (relative path)
+2. Nginx reverse proxy routes requests to backend:
+   ```nginx
+   location /api/ {
+       proxy_pass http://backend:8000/api/;
+   }
+   ```
+3. No hardcoded backend URLs in frontend code
+
+**Optional Environment Variable**:
+
+```bash
+# Only needed if you want to override the default
+VITE_API_URL=/api/v1  # (default fallback in code)
+```
+
+**To modify backend routing**: Edit `frontend/nginx-server.conf` and rebuild image.
 
 ---
 
