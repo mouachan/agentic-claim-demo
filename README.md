@@ -606,10 +606,6 @@ Includes:
 
 ---
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
 ## License
 
 [Add your license here]
