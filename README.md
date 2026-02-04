@@ -128,21 +128,10 @@ Customer Submits Claim
 4. System tracks both AI and human decisions for audit
 
 **Business Value**:
-- 99%+ faster processing with human oversight
+- Faster processing with human oversight
 - Consistent decisions with expert review
 - Training data for improving the agent
 - Regulatory compliance (human-in-loop requirement)
-
-### Measurable Business Impact
-
-| Metric | Traditional | Agentic | Improvement |
-|--------|------------|---------|-------------|
-| **Processing Time** | 2-5 days | 5-10 seconds | 99%+ faster |
-| **Document Review** | 10-15 min | 2-4 sec (auto) | 99%+ faster |
-| **Policy Lookup** | 5-10 min | < 1 sec (semantic) | 99%+ faster |
-| **Consistency** | Varies by adjuster | Uniform reasoning | High |
-| **Audit Trail** | Manual notes | Complete trace | Perfect |
-| **Availability** | Business hours | 24/7 | 3x coverage |
 
 ---
 
