@@ -258,12 +258,7 @@ podman build --platform linux/amd64 \
   backend/mcp_servers/rag_server/
 ```
 
-**PostgreSQL with pgvector**:
-```bash
-podman build --platform linux/amd64 \
-  -t quay.io/your-org/postgresql-pgvector:dev \
-  database/
-```
+**Note**: PostgreSQL uses the official `pgvector/pgvector:pg15` image, no custom build needed.
 
 ### Push Images
 

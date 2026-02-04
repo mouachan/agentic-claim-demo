@@ -290,8 +290,8 @@ rag:
 
 postgresql:
   image:
-    repository: quay.io/mouachan/agentic-claims-demo/postgresql-pgvector
-    tag: v1.7.5
+    repository: pgvector/pgvector
+    tag: pg15
 ```
 
 **Or build your own**: See [Development Guide](docs/DEVELOPMENT.md#building-container-images)

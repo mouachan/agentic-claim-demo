@@ -36,8 +36,8 @@ mcp:
 postgresql:
   enabled: true
   image:
-    repository: quay.io/your-org/postgresql-pgvector
-    tag: latest
+    repository: pgvector/pgvector
+    tag: pg15
   auth:
     username: claims_user
     database: claims_db
