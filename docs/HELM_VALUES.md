@@ -273,7 +273,7 @@ guardrails:
   enabled: true
 
   orchestrator:
-    image: quay.io/trustyai/guardrails-orchestr8:latest
+    image: registry.redhat.io/rhoai/odh-fms-guardrails-orchestrator-rhel9:latest
     replicas: 1
 
     resources:
