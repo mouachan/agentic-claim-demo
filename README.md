@@ -381,12 +381,13 @@ After deployment, run the embedding generation pipeline:
      - `llamastack_endpoint`: `http://llamastack-rhoai-service.claims-demo.svc.cluster.local:8321`
      - `llm_model`: `vllm-inference/llama-3-3-70b-instruct-quantized-w8a8`
      - `max_retries`: 30
+     - `num_claims`: 60 (default: 10, recommended: 60 for testing)
 
 4. **Monitor Execution**:
 
    ![Pipeline Graph](assets/pipeline-run-graph.png)
 
-   - Watch pipeline graph (10-15 minutes)
+   - Watch pipeline graph (15-20 minutes with num_claims=60)
    - Steps: Generate PDFs → Parse → Generate Embeddings
 
 5. **Verify**:
@@ -396,7 +397,7 @@ After deployment, run the embedding generation pipeline:
      psql -U claims_user -d claims_db -c \
      "SELECT COUNT(*) FROM knowledge_base WHERE embedding IS NOT NULL;"
 
-   # Check claims (should be 90/90)
+   # Check claims (should be 60/60 with num_claims=60)
    oc exec -n claims-demo statefulset/postgresql -- \
      psql -U claims_user -d claims_db -c \
      "SELECT COUNT(*) FROM claim_documents WHERE embedding IS NOT NULL;"
