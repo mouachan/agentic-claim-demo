@@ -467,14 +467,6 @@ npm run lint
 npm run format
 ```
 
-## Contributing
-
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for:
-- Code review process
-- Branch naming conventions
-- Commit message guidelines
-- Pull request template
-
 ## Useful Scripts
 
 ### Backend
