@@ -309,23 +309,6 @@ psql -h localhost -U claims_user -d claims_db \
   -f database/seed_data/001_sample_data.sql
 ```
 
-### Database Migrations
-
-For production deployments, consider using Alembic for migrations:
-
-```bash
-cd backend
-
-# Generate migration
-alembic revision --autogenerate -m "Add new column"
-
-# Apply migration
-alembic upgrade head
-
-# Rollback
-alembic downgrade -1
-```
-
 ## Manual Deployment (OpenShift)
 
 For manual deployment without Helm:
