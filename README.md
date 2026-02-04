@@ -7,9 +7,9 @@ An intelligent insurance claims processing system powered by AI agents on Red Ha
 - [Business Overview](#business-overview)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
-- [Deployment with Helm](#deployment-with-helm)
-- [Helm Values Structure](#helm-values-structure)
+- [Deployment](#deployment)
 - [Testing the Application](#testing-the-application)
+- [Configuration Management](#configuration-management)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [Known Issues](#known-issues)
@@ -229,7 +229,7 @@ backend/
 - **Frontend**: React 18 + TypeScript
 - **Database**: PostgreSQL 15 + pgvector
 - **Pipelines**: Kubeflow Pipelines v2
-- **Deployment**: Helm 3.x on OpenShift 4.14+
+- **Deployment**: Helm 3.x on OpenShift 4.20+
 
 ---
 
@@ -237,7 +237,7 @@ backend/
 
 ### Required Infrastructure
 
-1. **OpenShift 4.14+** with:
+1. **OpenShift 4.20+** with:
    - **GPU Nodes**: 4x NVIDIA L40 (48GB) or equivalent
    - **CPU/Memory**: 32+ vCPU, 128GB+ RAM
    - **Storage**: Dynamic provisioning (RWO, RWX)
@@ -250,7 +250,7 @@ backend/
 3. **Tools**:
    ```bash
    helm version  # 3.12+
-   oc version    # 4.14+
+   oc version    # 4.20+
    ```
 
 ### Accounts
@@ -260,7 +260,7 @@ backend/
 
 ---
 
-## Deployment with Helm
+## Deployment
 
 ### 1. Use Pre-built Images (Recommended)
 
@@ -415,45 +415,6 @@ echo "Backend: http://$(oc get route backend -n claims-demo -o jsonpath='{.spec.
 
 ---
 
-## Helm Values Structure
-
-For detailed configuration options, see [Helm Values Reference](docs/HELM_VALUES.md).
-
-**Quick reference**:
-
-```yaml
-global:
-  namespace: claims-demo
-  clusterDomain: apps.cluster.com
-
-backend:
-  image:
-    repository: quay.io/mouachan/agentic-claims-demo/backend
-    tag: v1.7.5
-  replicas: 1
-
-postgresql:
-  persistence:
-    size: 10Gi
-    storageClass: ""  # Use cluster default
-
-inference:
-  endpoint: "https://llama-3-3-70b-llama-3-3-70b.apps.CLUSTER/v1"
-  resources:
-    requests:
-      nvidia.com/gpu: 4
-
-dataSciencePipelines:
-  enabled: true
-  objectStorage:
-    scheme: http  # CRITICAL for internal MinIO
-
-guardrails:
-  enabled: true
-```
-
----
-
 ## Testing the Application
 
 ### Via Web UI
@@ -524,6 +485,116 @@ curl "http://$BACKEND_URL/api/v1/claims/${CLAIM_ID}/status" | jq
 # Get decision
 curl "http://$BACKEND_URL/api/v1/claims/${CLAIM_ID}/decision" | jq
 ```
+
+---
+
+## Configuration Management
+
+### Helm Values
+
+For detailed configuration options, see [Helm Values Reference](docs/HELM_VALUES.md).
+
+**Quick reference**:
+
+```yaml
+global:
+  namespace: claims-demo
+  clusterDomain: apps.cluster.com
+
+backend:
+  image:
+    repository: quay.io/mouachan/agentic-claims-demo/backend
+    tag: v1.7.5
+  replicas: 1
+
+postgresql:
+  image:
+    repository: pgvector/pgvector
+    tag: pg15
+  persistence:
+    size: 10Gi
+    storageClass: ""  # Use cluster default
+
+inference:
+  endpoint: "https://llama-3-3-70b-llama-3-3-70b.apps.CLUSTER/v1"
+  resources:
+    requests:
+      nvidia.com/gpu: 4
+
+dataSciencePipelines:
+  enabled: true
+  objectStorage:
+    scheme: http  # CRITICAL for internal MinIO
+
+guardrails:
+  enabled: true
+```
+
+### Agent Prompts
+
+Agent prompts are stored in `app/llamastack/prompts/` and mounted via ConfigMap.
+
+**Location**: `backend/app/llamastack/prompts/`
+- `agent_prompt.txt` - Main ReAct agent instructions
+- `claim_processor_prompt.txt` - Claim processing workflow
+
+**Modifying Prompts**:
+
+1. **Development** - Edit files directly in `backend/app/llamastack/prompts/`
+2. **Production** - Update ConfigMap:
+   ```bash
+   oc edit configmap claims-prompts -n claims-demo
+   ```
+3. **Restart backend** to load changes:
+   ```bash
+   oc rollout restart deployment/backend -n claims-demo
+   ```
+
+**Environment Variable**: `PROMPTS_DIR=/app/prompts`
+
+### Backend Environment Variables
+
+Backend configuration via ConfigMap (`backend-config`) and Secrets.
+
+**Key Variables**:
+
+```yaml
+# LlamaStack
+LLAMASTACK_ENDPOINT: http://llamastack-rhoai-service.claims-demo.svc.cluster.local:8321
+LLAMASTACK_DEFAULT_MODEL: vllm-inference/llama-3-3-70b-instruct-quantized-w8a8
+LLAMASTACK_EMBEDDING_MODEL: vllm-embedding/embeddinggemma-300m
+LLAMASTACK_MAX_TOKENS: 4096
+
+# MCP Servers
+OCR_SERVER_URL: http://ocr-server.claims-demo.svc.cluster.local:8080
+RAG_SERVER_URL: http://rag-server.claims-demo.svc.cluster.local:8080
+
+# Guardrails
+GUARDRAILS_SERVER_URL: https://guardrails-orchestrator-service.claims-demo.svc.cluster.local:8032
+ENABLE_PII_DETECTION: true
+
+# Database
+DATABASE_URL: postgresql+asyncpg://claims_user:***@postgresql.claims-demo.svc.cluster.local:5432/claims_db
+```
+
+**Modify**:
+```bash
+oc edit configmap backend-config -n claims-demo
+oc rollout restart deployment/backend -n claims-demo
+```
+
+### Frontend Environment Variables
+
+Frontend configuration built into image at build time.
+
+**Key Variables** (during build):
+
+```bash
+REACT_APP_BACKEND_URL=http://backend.claims-demo.svc.cluster.local:8000
+REACT_APP_ENV=production
+```
+
+**Note**: Frontend env vars are baked into the build. To change, rebuild the image.
 
 ---
 
@@ -605,8 +676,3 @@ Includes:
 - ✅ HITL review workflow
 - ✅ Ask Agent feature
 
----
-
-## License
-
-[Add your license here]
