@@ -9,12 +9,15 @@ export default function ClaimsListPage() {
   const [error, setError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<ClaimStatus | ''>('')
+  const [claimTypeFilter, setClaimTypeFilter] = useState<string>('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [totalPages, setTotalPages] = useState(1)
 
   useEffect(() => {
     console.log('ClaimsListPage: loading claims, page=', page, 'filter=', statusFilter)
     loadClaims()
-  }, [page, statusFilter])
+  }, [page, statusFilter, claimTypeFilter, searchQuery, sortOrder])
 
   const loadClaims = async () => {
     try {
@@ -23,7 +26,35 @@ export default function ClaimsListPage() {
       setError(null)
       const response = await claimsApi.listClaims(page, 20, statusFilter || undefined)
       console.log('Claims loaded:', response)
-      setClaims(response.claims || [])
+
+      // Client-side filtering and sorting
+      let filteredClaims = response.claims || []
+
+      // Filter by claim type
+      if (claimTypeFilter) {
+        filteredClaims = filteredClaims.filter((c: Claim) =>
+          c.claim_type?.toLowerCase() === claimTypeFilter.toLowerCase()
+        )
+      }
+
+      // Search filter
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase()
+        filteredClaims = filteredClaims.filter((c: Claim) =>
+          c.claim_number.toLowerCase().includes(query) ||
+          c.user_id.toLowerCase().includes(query) ||
+          c.claim_type?.toLowerCase().includes(query)
+        )
+      }
+
+      // Sort by claim_number
+      filteredClaims.sort((a: Claim, b: Claim) => {
+        const numA = parseInt(a.claim_number.replace(/\D/g, ''))
+        const numB = parseInt(b.claim_number.replace(/\D/g, ''))
+        return sortOrder === 'asc' ? numA - numB : numB - numA
+      })
+
+      setClaims(filteredClaims)
       const totalPagesCalc = Math.ceil(response.total / 20)
       setTotalPages(totalPagesCalc)
     } catch (err) {
@@ -55,6 +86,10 @@ export default function ClaimsListPage() {
     return new Date(dateString).toLocaleString()
   }
 
+  const toggleSortOrder = () => {
+    setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -73,9 +108,35 @@ export default function ClaimsListPage() {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters and Search */}
       <div className="bg-white shadow rounded-lg p-6">
-        <div className="flex flex-wrap gap-4 items-center">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* Search Bar */}
+          <div className="md:col-span-2">
+            <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-1">
+              🔍 Search Claims
+            </label>
+            <div className="relative">
+              <input
+                id="search"
+                type="text"
+                placeholder="Search by claim number, user ID, or type..."
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  setPage(1)
+                }}
+                className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+              />
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          {/* Status Filter */}
           <div>
             <label htmlFor="status-filter" className="block text-sm font-medium text-gray-700 mb-1">
               Filter by Status
@@ -97,6 +158,28 @@ export default function ClaimsListPage() {
               <option value="manual_review">Manual Review</option>
             </select>
           </div>
+
+          {/* Claim Type Filter */}
+          <div>
+            <label htmlFor="type-filter" className="block text-sm font-medium text-gray-700 mb-1">
+              Filter by Type
+            </label>
+            <select
+              id="type-filter"
+              value={claimTypeFilter}
+              onChange={(e) => {
+                setClaimTypeFilter(e.target.value)
+                setPage(1)
+              }}
+              className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md"
+            >
+              <option value="">All Types</option>
+              <option value="Auto">Auto</option>
+              <option value="Home">Home</option>
+              <option value="Medical">Medical</option>
+              <option value="Life">Life</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -116,7 +199,9 @@ export default function ClaimsListPage() {
           </svg>
           <h3 className="mt-2 text-sm font-medium text-gray-900">No claims found</h3>
           <p className="mt-1 text-sm text-gray-500">
-            {statusFilter ? `No claims with status "${statusFilter}"` : 'No claims in the system'}
+            {statusFilter || claimTypeFilter || searchQuery
+              ? 'Try adjusting your filters'
+              : 'No claims in the system'}
           </p>
         </div>
       ) : (
@@ -124,8 +209,21 @@ export default function ClaimsListPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Claim Number
+                <th
+                  scope="col"
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={toggleSortOrder}
+                >
+                  <div className="flex items-center gap-1">
+                    Claim Number
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      {sortOrder === 'asc' ? (
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                      ) : (
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      )}
+                    </svg>
+                  </div>
                 </th>
                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   User ID

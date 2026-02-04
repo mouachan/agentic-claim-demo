@@ -49,8 +49,12 @@ class ClaimResponse(ClaimBase):
     submitted_at: datetime
     processed_at: Optional[datetime] = None
     total_processing_time_ms: Optional[int] = None
+    is_archived: bool = False
     claim_metadata: Dict[str, Any] = Field(
         default_factory=dict, serialization_alias="metadata"
+    )
+    agent_logs: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="HITL review logs and chat messages"
     )
     created_at: datetime
     updated_at: datetime
@@ -120,9 +124,22 @@ class ClaimLogsResponse(BaseModel):
 class ClaimDecisionResponse(BaseModel):
     id: UUID
     claim_id: UUID
+    # Initial system decision
+    initial_decision: str
+    initial_confidence: Optional[float] = None
+    initial_reasoning: Optional[str] = None
+    initial_decided_at: Optional[datetime] = None
+    # Final reviewer decision
+    final_decision: Optional[str] = None
+    final_decision_by: Optional[str] = None
+    final_decision_by_name: Optional[str] = None
+    final_decision_at: Optional[datetime] = None
+    final_decision_notes: Optional[str] = None
+    # Legacy fields for backwards compatibility
     decision: str
-    confidence: float
-    reasoning: str
+    confidence: Optional[float] = None
+    reasoning: Optional[str] = None
+    # Supporting data
     relevant_policies: Optional[Dict[str, Any]] = None
     similar_claims: Optional[Dict[str, Any]] = None
     user_contract_info: Optional[Dict[str, Any]] = None
@@ -205,6 +222,47 @@ class ClaimStatistics(BaseModel):
     failed_claims: int
     manual_review_claims: int
     average_processing_time_ms: Optional[float] = None
+
+
+# =============================================================================
+# HITL - Ask Agent Schemas
+# =============================================================================
+
+class AskAgentRequest(BaseModel):
+    question: str = Field(..., description="Reviewer's question to the agent", min_length=1)
+    reviewer_id: str = Field(..., description="Unique identifier for the reviewer")
+    reviewer_name: str = Field(..., description="Display name of the reviewer")
+
+
+class AskAgentResponse(BaseModel):
+    success: bool
+    claim_id: str
+    question: str
+    answer: str
+    timestamp: datetime = Field(default_factory=utc_now)
+
+
+# =============================================================================
+# Guardrails Schemas
+# =============================================================================
+
+class GuardrailsDetectionResponse(BaseModel):
+    """Schema for a single guardrails detection."""
+    id: UUID
+    detection_type: str  # EMAIL_ADDRESS, PHONE_NUMBER, etc.
+    severity: Optional[str] = None
+    action_taken: Optional[str] = None
+    detected_at: datetime
+    record_metadata: Optional[Dict[str, Any]] = None  # Contains source_step, detected_fields, etc.
+
+    model_config = {"from_attributes": True}
+
+
+class GuardrailsDetectionsListResponse(BaseModel):
+    """Response for listing all detections for a claim."""
+    claim_id: UUID
+    detections: List[GuardrailsDetectionResponse]
+    total: int
 
 
 # =============================================================================

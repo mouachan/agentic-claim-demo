@@ -16,7 +16,6 @@ Endpoints:
 import json
 import logging
 import os
-import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -24,8 +23,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
-from llama_stack_client import AsyncLlamaStackClient
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -36,99 +34,19 @@ from app.core.database import get_db
 from app.models import claim as models
 from app.llamastack.prompts import (
     CLAIMS_PROCESSING_AGENT_INSTRUCTIONS,
-    USER_MESSAGE_OCR_ONLY_TEMPLATE,
     USER_MESSAGE_FULL_WORKFLOW_TEMPLATE,
     AGENT_CONFIG,
     format_prompt
 )
+from app.services.claim_service import ClaimService
+from app.api.hitl import notify_manual_review_required
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Constants
-LLAMASTACK_TIMEOUT = 300.0  # 5 minutes for agent operations
-
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
-
-def extract_json_from_text(text: str) -> Optional[dict]:
-    """Extract JSON object from text that may contain other content."""
-    if not text:
-        return None
-    
-    # Try direct parse first
-    try:
-        return json.loads(text.strip())
-    except json.JSONDecodeError:
-        pass
-    
-    # Try to find JSON object in text using regex
-    json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-    matches = re.findall(json_pattern, text, re.DOTALL)
-    
-    for match in matches:
-        try:
-            return json.loads(match)
-        except json.JSONDecodeError:
-            continue
-    
-    # Try to find JSON between code blocks
-    code_block_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
-    code_matches = re.findall(code_block_pattern, text, re.DOTALL)
-    
-    for match in code_matches:
-        try:
-            return json.loads(match)
-        except json.JSONDecodeError:
-            continue
-    
-    return None
-
-
-def parse_agent_decision(response_text: str) -> dict:
-    """Parse agent response to extract decision data."""
-    json_data = extract_json_from_text(response_text)
-    
-    if json_data:
-        return {
-            "recommendation": json_data.get("recommendation", json_data.get("decision", "manual_review")),
-            "confidence": float(json_data.get("confidence", json_data.get("confidence_score", 0.5))),
-            "reasoning": json_data.get("reasoning", json_data.get("explanation", response_text)),
-            "relevant_policies": json_data.get("relevant_policies", json_data.get("policies", [])),
-            "estimated_coverage_amount": json_data.get("estimated_coverage_amount", json_data.get("coverage", None))
-        }
-    
-    # Fallback: infer decision from text
-    response_lower = response_text.lower()
-    
-    if "approve" in response_lower or "approved" in response_lower:
-        recommendation = "approve"
-        confidence = 0.6
-    elif "deny" in response_lower or "denied" in response_lower or "reject" in response_lower:
-        recommendation = "deny"
-        confidence = 0.6
-    else:
-        recommendation = "manual_review"
-        confidence = 0.5
-    
-    return {
-        "recommendation": recommendation,
-        "confidence": confidence,
-        "reasoning": response_text,
-        "relevant_policies": [],
-        "estimated_coverage_amount": None
-    }
-
-
-async def create_llamastack_client() -> AsyncLlamaStackClient:
-    """Create configured LlamaStack async client."""
-    return AsyncLlamaStackClient(
-        base_url=settings.llamastack_endpoint,
-        timeout=LLAMASTACK_TIMEOUT
-    )
+# Initialize service
+claim_service = ClaimService()
 
 
 # =============================================================================
@@ -141,11 +59,16 @@ async def list_claims(
     page_size: int = Query(default=20, ge=1, le=100),
     status: Optional[str] = Query(default=None),
     user_id: Optional[str] = Query(default=None),
+    include_archived: bool = Query(default=False),
     db: AsyncSession = Depends(get_db)
 ):
     """List claims with pagination and optional filtering."""
     try:
         query = select(models.Claim)
+
+        # Filter out archived claims by default
+        if not include_archived:
+            query = query.where(models.Claim.is_archived == False)
 
         if status:
             query = query.where(models.Claim.status == status)
@@ -245,312 +168,147 @@ async def process_claim(
 ):
     """
     Process a claim using LlamaStack ReActAgent.
-    
+
     The agent will:
     1. Extract document info via OCR
     2. Retrieve user contracts via RAG
     3. Find similar historical claims
     4. Make a decision (approve/deny/manual_review)
     """
-    client = None
-    agent_id = None
-    session_id = None
-    start_time = time.time()
-
     try:
-        # Step 1: Get and validate claim
-        query = select(models.Claim).where(models.Claim.id == claim_id)
-        result = await db.execute(query)
-        claim = result.scalar_one_or_none()
-
+        # Get and validate claim
+        claim = await claim_service.get_claim_by_id(db, str(claim_id))
         if not claim:
             raise HTTPException(status_code=404, detail="Claim not found")
 
+        # If claim is already being processed, return 202 Accepted instead of 409 error
         if claim.status == models.ClaimStatus.processing:
-            raise HTTPException(status_code=409, detail="Claim is already being processed")
+            return Response(
+                status_code=202,
+                content=json.dumps({
+                    "claim_id": str(claim_id),
+                    "status": "processing",
+                    "message": "Claim is already being processed. Please wait for completion.",
+                    "processing_started_at": claim.updated_at.isoformat() if claim.updated_at else None
+                }),
+                media_type="application/json"
+            )
 
-        # Update status to processing
-        claim.status = models.ClaimStatus.processing
-        await db.commit()
+        # Build tool list for Responses API
+        tools = []
+        if not process_request.skip_ocr:
+            tools.append("ocr_document")
+        if process_request.enable_rag:
+            tools.extend([
+                "retrieve_user_info",
+                "retrieve_similar_claims",
+                "search_knowledge_base"
+            ])
 
-        # Store claim data for agent message
-        claim_user_id = claim.user_id
-        claim_document_path = claim.document_path
-        claim_type = getattr(claim, 'claim_type', 'general')
-        claim_submitted_at = claim.submitted_at
+        agent_config = {
+            "model": settings.llamastack_default_model,
+            "instructions": CLAIMS_PROCESSING_AGENT_INSTRUCTIONS,
+        }
+        # Note: We don't add shield_ids here because that would block processing
+        # Instead, we check for PII after processing and log detections
 
-        # Step 2: Create LlamaStack agent using HTTP API directly
-        try:
-            toolgroups = []
-            if not process_request.skip_ocr:
-                toolgroups.append("mcp::ocr-server")
-            if process_request.enable_rag:
-                toolgroups.append("mcp::rag-server")
+        # Process claim with agent service
+        result = await claim_service.process_claim_with_agent(
+            db=db,
+            claim_id=str(claim_id),
+            agent_config=agent_config,
+            tools=tools
+        )
 
-            async with httpx.AsyncClient(timeout=60.0) as http_client:
-                logger.info(f"Creating LlamaStack agent for claim {claim_id}...")
+        # Save decision
+        await claim_service.save_decision(
+            db=db,
+            claim_id=str(claim_id),
+            decision_data=result["decision"]
+        )
 
-                # Load agent configuration from ConfigMap
-                logger.info(f"Agent config loaded: {AGENT_CONFIG}")
-                logger.info(f"Toolgroups: {toolgroups}")
-                logger.info(f"=== AGENT INSTRUCTIONS (FULL) ===\n{CLAIMS_PROCESSING_AGENT_INSTRUCTIONS}\n=== END INSTRUCTIONS ===")
+        # Check for PII in claim content if enabled (log only, don't block)
+        if settings.enable_pii_detection:
+            logger.info(f"PII detection enabled, checking claim {claim_id}")
+            try:
+                # Collect all text to check for PII
+                texts_to_check = []
 
-                # Create agent with config from ConfigMap
-                agent_response = await http_client.post(
-                    f"{settings.llamastack_endpoint}/v1/agents",
-                    json={
-                        "agent_config": {
-                            "model": settings.llamastack_default_model,
-                            "instructions": CLAIMS_PROCESSING_AGENT_INSTRUCTIONS,
-                            "enable_session_persistence": AGENT_CONFIG.get("enable_session_persistence", True),
-                            "toolgroups": toolgroups,
-                            "tool_config": {
-                                "tool_choice": AGENT_CONFIG.get("tool_choice", "auto"),
-                                "tool_prompt_format": AGENT_CONFIG.get("tool_prompt_format", "json")
-                            },
-                            "max_infer_iters": AGENT_CONFIG.get("max_infer_iters", 8),
-                            "sampling_params": {
-                                "strategy": {"type": AGENT_CONFIG.get("sampling_strategy", "greedy")},
-                                "max_tokens": AGENT_CONFIG.get("max_tokens", 2048)
-                            }
-                        }
-                    }
-                )
+                # 1. Get OCR content
+                ocr_query = select(models.ClaimDocument).where(
+                    models.ClaimDocument.claim_id == claim_id
+                ).order_by(models.ClaimDocument.created_at.desc()).limit(1)
+                ocr_result = await db.execute(ocr_query)
+                claim_doc = ocr_result.scalar_one_or_none()
 
-                if agent_response.status_code != 200:
-                    raise ValueError(f"Failed to create agent: {agent_response.text}")
+                if claim_doc and claim_doc.raw_ocr_text:
+                    texts_to_check.append(f"OCR Document: {claim_doc.raw_ocr_text}")
+                    logger.info(f"Added OCR text for PII check: {len(claim_doc.raw_ocr_text)} chars")
 
-                agent_id = agent_response.json()["agent_id"]
-                logger.info(f"Created agent: {agent_id}")
-
-                # Create session
-                session_response = await http_client.post(
-                    f"{settings.llamastack_endpoint}/v1/agents/{agent_id}/session",
-                    json={"session_name": f"claim_{claim_id}"}
-                )
-
-                if session_response.status_code != 200:
-                    raise ValueError(f"Failed to create session: {session_response.text}")
-
-                session_id = session_response.json()["session_id"]
-                logger.info(f"Created session: {session_id}")
-
-                # Step 3: Execute agent - Load user message from template
-                if not process_request.enable_rag and not process_request.skip_ocr:
-                    # OCR-only mode
-                    user_message = format_prompt(
-                        USER_MESSAGE_OCR_ONLY_TEMPLATE,
-                        document_path=claim_document_path
-                    )
-                else:
-                    # Full workflow mode
-                    user_message = format_prompt(
-                        USER_MESSAGE_FULL_WORKFLOW_TEMPLATE,
-                        claim_id=claim_id,
-                        user_id=claim_user_id,
-                        document_path=claim_document_path,
-                        claim_type=claim_type,
-                        skip_ocr=process_request.skip_ocr,
-                        enable_rag=process_request.enable_rag
-                    )
-
-                logger.info(f"=== USER MESSAGE ===\n{user_message}\n=== END USER MESSAGE ===")
-                logger.info("Starting agent execution...")
-                final_response = ""
-                tool_execution_count = 0
-
-                # Execute turn using HTTP streaming
-                async with http_client.stream(
-                    "POST",
-                    f"{settings.llamastack_endpoint}/v1/agents/{agent_id}/session/{session_id}/turn",
-                    json={
-                        "messages": [{"role": "user", "content": user_message}],
-                        "stream": True
-                    },
-                    timeout=180.0
-                ) as response:
-                    if response.status_code != 200:
-                        raise ValueError(f"Failed to execute turn: {response.text}")
-
-                    async for line in response.aiter_lines():
-                        if not line.strip() or not line.startswith("data: "):
-                            continue
-
-                        data = line[6:]  # Remove "data: " prefix
+                # 2. Extract data from tool calls (RAG user info, etc.)
+                tool_calls = result.get('tool_calls', [])
+                logger.info(f"Found {len(tool_calls)} tool calls to check for PII")
+                for tc in tool_calls:
+                    if tc.get('name') == 'retrieve_user_info' and tc.get('output'):
                         try:
-                            event = json.loads(data)
-                            if not isinstance(event, dict) or "event" not in event:
-                                continue
+                            import json as json_lib
+                            output_data = json_lib.loads(tc['output'])
+                            if output_data.get('success') and output_data.get('user_info'):
+                                user_info = output_data['user_info']
+                                # Build text with user PII data
+                                user_text = f"User: {user_info.get('full_name', '')} Email: {user_info.get('email', '')} Phone: {user_info.get('phone_number', '')} DOB: {user_info.get('date_of_birth', '')}"
+                                texts_to_check.append(user_text)
+                                logger.info(f"Added user info for PII check: {user_text}")
+                        except Exception as e:
+                            logger.warning(f"Error parsing user info for PII check: {e}")
 
-                            payload = event["event"].get("payload", {})
-                            step_type = payload.get("step_type")
-                            event_type = payload.get("event_type")
+                # Combine all texts
+                combined_text = "\n".join(texts_to_check)
+                logger.info(f"Checking combined text for PII: {len(combined_text)} chars total")
 
-                            # Debug: log all events
-                            logger.info(f"SSE Event - step_type: {step_type}, event_type: {event_type}")
+                if combined_text:
+                    # Check for PII using shield
+                    pii_result = await claim_service.check_pii_shield(
+                        text=combined_text,
+                        claim_id=str(claim_id)
+                    )
 
-                            # Track tool executions
-                            if step_type == "tool_execution":
-                                if event_type == "step_start":
-                                    tool_execution_count += 1
-                                    # Log entire payload to find tool name
-                                    logger.info(f"Tool execution #{tool_execution_count} - step_start payload keys: {payload.keys()}")
+                    # If PII detected, save detections with source info
+                    if pii_result.get("violations_found"):
+                        detections = pii_result.get("detections", [])
+                        # Enrich detections with source information
+                        for detection in detections:
+                            detection["source_step"] = "retrieve_user_info (RAG)"
+                            detection["detected_fields"] = ["email", "phone", "date_of_birth"]
 
-                                    # Try multiple places where tool name might be
-                                    tool_name = None
-                                    step_details = payload.get("step_details", {})
-                                    tool_calls = step_details.get("tool_calls", [])
+                        await claim_service.save_pii_detections(
+                            db=db,
+                            claim_id=str(claim_id),
+                            detections=detections
+                        )
+                        logger.info(f"PII detected in claim {claim_id}: {len(detections)} violations logged")
+            except Exception as e:
+                # Don't fail the whole request if PII check fails
+                logger.error(f"Error checking PII for claim {claim_id}: {e}", exc_info=True)
 
-                                    if tool_calls and len(tool_calls) > 0:
-                                        tool_name = tool_calls[0].get("tool_name")
+        # Notify reviewers if manual review required
+        recommendation = result["decision"].get("recommendation", "manual_review")
+        if recommendation == "manual_review":
+            reasoning = result["decision"].get("reasoning", "Agent could not make automated decision")
+            await notify_manual_review_required(claim_id, reasoning)
 
-                                    # Also check top-level payload
-                                    if not tool_name and "tool_name" in payload:
-                                        tool_name = payload.get("tool_name")
-
-                                    if tool_name:
-                                        logger.info(f"Tool execution #{tool_execution_count} started: {tool_name}")
-                                    else:
-                                        logger.info(f"Tool execution #{tool_execution_count} started (name not yet available)")
-                                elif event_type == "step_complete":
-                                    step_details = payload.get("step_details", {})
-                                    tool_calls = step_details.get("tool_calls", [])
-                                    tool_responses = step_details.get("tool_responses", [])
-                                    for tool_call in tool_calls:
-                                        logger.info(f"  Tool completed: {tool_call.get('tool_name')}")
-                                    for tool_response in tool_responses:
-                                        content = tool_response.get("content", "")
-                                        # Truncate long responses for logging
-                                        content_preview = content[:500] if len(content) > 500 else content
-                                        logger.info(f"  Tool response: {content_preview}")
-
-                            # Collect inference text (streaming)
-                            elif step_type == "inference":
-                                if event_type == "step_progress":
-                                    delta = payload.get("delta", {})
-                                    if delta.get("type") == "text":
-                                        text_chunk = delta.get("text", "")
-                                        final_response += text_chunk
-                                elif event_type == "step_complete":
-                                    step_details = payload.get("step_details", {})
-                                    # Extract text from model_response
-                                    model_response = step_details.get("model_response", {})
-                                    if isinstance(model_response, dict):
-                                        content = model_response.get("content", "")
-                                        if content:
-                                            logger.info(f"Got model_response content: {len(str(content))} chars")
-                                            final_response += str(content)
-                                    # Also try legacy 'text' field for compatibility
-                                    text_chunk = step_details.get("text", "")
-                                    if text_chunk:
-                                        logger.info(f"Got text from step_complete: {len(text_chunk)} chars")
-                                        final_response += text_chunk
-
-                            # Get final response from turn_complete (according to LlamaStack docs)
-                            elif event_type == "turn_complete":
-                                turn_data = payload.get("turn", {})
-                                output_message = turn_data.get("output_message", {})
-                                content = output_message.get("content", "")
-                                if content and not final_response:
-                                    # Use turn_complete content if we didn't get it from streaming
-                                    final_response = str(content)
-                                    logger.info(f"Got response from turn_complete: {len(final_response)} chars")
-
-                        except json.JSONDecodeError:
-                            continue
-
-                logger.info(f"Agent completed. Tools used: {tool_execution_count}, Response: {len(final_response)} chars")
-
-                # Step 4: Parse response and update claim
-                if not final_response.strip():
-                    logger.warning("Empty response from agent")
-                    decision_data = {
-                        "recommendation": "manual_review",
-                        "confidence": 0.0,
-                        "reasoning": "Agent returned empty response"
-                    }
-                else:
-                    decision_data = parse_agent_decision(final_response)
-
-                processing_time_ms = int((time.time() - start_time) * 1000)
-
-                await db.refresh(claim)
-
-                # Store metadata
-                if not claim.claim_metadata:
-                    claim.claim_metadata = {}
-                claim.claim_metadata["llamastack_agent_id"] = agent_id
-                claim.claim_metadata["llamastack_session_id"] = session_id
-                claim.claim_metadata["tool_execution_count"] = tool_execution_count
-                flag_modified(claim, "claim_metadata")
-
-                # Update status
-                recommendation = decision_data.get("recommendation", "manual_review")
-                if recommendation == "approve":
-                    claim.status = models.ClaimStatus.completed
-                elif recommendation == "deny":
-                    claim.status = models.ClaimStatus.failed
-                else:
-                    claim.status = models.ClaimStatus.manual_review
-
-                claim.total_processing_time_ms = processing_time_ms
-                claim.processed_at = datetime.now(timezone.utc)
-
-                # Create decision record
-                decision = models.ClaimDecision(
-                    claim_id=claim_id,
-                    decision=recommendation,
-                    confidence=decision_data.get("confidence", 0.0),
-                    reasoning=decision_data.get("reasoning", ""),
-                    relevant_policies={
-                        "policies": decision_data.get("relevant_policies", []),
-                        "estimated_coverage": decision_data.get("estimated_coverage_amount")
-                    },
-                    llm_model=settings.llamastack_default_model,
-                    requires_manual_review=(recommendation == "manual_review")
-                )
-                db.add(decision)
-                await db.commit()
-
-                logger.info(f"Claim {claim_id} processed: {recommendation}")
-
-                return schemas.ProcessClaimResponse(
-                    claim_id=claim_id,
-                    status=claim.status.value,
-                    message=f"Processing completed: {recommendation}",
-                    processing_started_at=claim_submitted_at
-                )
-
-        except httpx.ConnectError as e:
-            logger.error(f"Cannot connect to LlamaStack: {e}")
-            claim.status = models.ClaimStatus.failed
-            await db.commit()
-            raise HTTPException(status_code=503, detail=f"Cannot connect to LlamaStack: {str(e)}")
-        except httpx.TimeoutException as e:
-            logger.error(f"LlamaStack request timed out: {e}")
-            raise HTTPException(status_code=504, detail="Agent processing timed out")
+        return schemas.ProcessClaimResponse(
+            claim_id=claim_id,
+            status=result["claim_status"],
+            message=f"Processing completed: {recommendation}",
+            processing_started_at=claim.submitted_at
+        )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error processing claim {claim_id}: {str(e)}", exc_info=True)
-        try:
-            await db.rollback()
-            result = await db.execute(select(models.Claim).where(models.Claim.id == claim_id))
-            claim = result.scalar_one_or_none()
-            if claim:
-                claim.status = models.ClaimStatus.failed
-                await db.commit()
-        except Exception as db_error:
-            logger.error(f"Failed to update claim status: {db_error}")
         raise HTTPException(status_code=500, detail=str(e))
-
-    finally:
-        if client:
-            try:
-                await client.close()
-            except Exception as e:
-                logger.warning(f"Error closing LlamaStack client: {e}")
 
 
 # =============================================================================
@@ -571,98 +329,44 @@ async def get_claim_status(
         if not claim:
             raise HTTPException(status_code=404, detail="Claim not found")
 
-        agent_id = claim.claim_metadata.get("llamastack_agent_id") if claim.claim_metadata else None
-        session_id = claim.claim_metadata.get("llamastack_session_id") if claim.claim_metadata else None
-
+        # Read processing steps from claim metadata (saved during processing)
         processing_steps = []
         current_step = None
         progress = 0.0
 
-        # Fetch LlamaStack session history if available
-        if agent_id and session_id:
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as http_client:
-                    response = await http_client.get(
-                        f"{settings.llamastack_endpoint}/v1/agents/{agent_id}/session/{session_id}"
-                    )
+        if claim.claim_metadata and 'processing_steps' in claim.claim_metadata:
+            # Read processing steps from claim metadata
+            saved_steps = claim.claim_metadata['processing_steps']
+            for step in saved_steps:
+                processing_steps.append(schemas.ProcessingStepLog(
+                    step_name=step.get('step_name', 'unknown'),
+                    agent_name=step.get('agent_name', 'unknown'),
+                    status=step.get('status', 'completed'),
+                    duration_ms=step.get('duration_ms'),
+                    started_at=None,
+                    completed_at=None,
+                    output_data=step.get('output_data'),
+                    error_message=step.get('error_message')
+                ))
 
-                    if response.status_code == 200:
-                        session_data = response.json()
-                        turns = session_data.get("turns", [])
-
-                        for turn in turns:
-                            steps = turn.get("steps", [])
-                            for step in steps:
-                                step_type = step.get("step_type")
-
-                                # Only extract tool_execution steps (skip inference steps)
-                                if step_type == "tool_execution":
-                                    # LlamaStack puts tool data directly in step, not in step_details
-                                    tool_calls = step.get("tool_calls", [])
-                                    tool_responses = step.get("tool_responses", [])
-
-                                    for i, tool_call in enumerate(tool_calls):
-                                        tool_name = tool_call.get("tool_name", "unknown")
-
-                                        # Keep exact tool names for better frontend display
-                                        step_name = tool_name
-
-                                        # Map to agent names
-                                        if "ocr" in tool_name.lower():
-                                            agent_name = "ocr-agent"
-                                        elif "retrieve_user_info" in tool_name.lower():
-                                            agent_name = "rag-agent"
-                                        elif "retrieve_similar_claims" in tool_name.lower():
-                                            agent_name = "rag-agent"
-                                        elif "search_knowledge_base" in tool_name.lower():
-                                            agent_name = "rag-agent"
-                                        else:
-                                            agent_name = "unknown"
-
-                                        # Get output data from tool_responses
-                                        output_data = None
-                                        if i < len(tool_responses):
-                                            tool_resp = tool_responses[i]
-                                            if isinstance(tool_resp, dict):
-                                                # Content is in tool_resp.content which is a list
-                                                content_list = tool_resp.get("content", [])
-                                                if content_list and len(content_list) > 0:
-                                                    # Extract text from first content item
-                                                    first_content = content_list[0]
-                                                    if isinstance(first_content, dict) and "text" in first_content:
-                                                        text_content = first_content["text"]
-                                                        # Try to parse as JSON
-                                                        try:
-                                                            output_data = json.loads(text_content)
-                                                        except:
-                                                            output_data = {"raw_text": text_content}
-                                                    else:
-                                                        output_data = first_content
-                                            else:
-                                                output_data = str(tool_resp)
-
-                                        processing_steps.append(schemas.ProcessingStepLog(
-                                            step_name=step_name,
-                                            agent_name=agent_name,
-                                            status="completed",
-                                            duration_ms=0,
-                                            started_at=step.get("started_at"),
-                                            completed_at=step.get("completed_at"),
-                                            output_data=output_data,
-                                            error_message=None
-                                        ))
-
-            except Exception as e:
-                logger.warning(f"Could not fetch LlamaStack session history: {str(e)}")
-
-        # Determine progress
-        step_progress = {"ocr": 25, "rag_retrieval": 75, "llm_decision": 100}
-
-        if processing_steps:
-            current_step = processing_steps[-1].step_name
-            progress = step_progress.get(current_step, 50)
-        elif claim.status in [models.ClaimStatus.completed, models.ClaimStatus.failed, models.ClaimStatus.manual_review]:
+        # Determine progress - Check claim status first
+        if claim.status in [models.ClaimStatus.completed, models.ClaimStatus.failed, models.ClaimStatus.manual_review]:
             progress = 100.0
+        elif processing_steps:
+            current_step = processing_steps[-1].step_name
+            # Map actual tool names to progress percentages
+            step_progress = {
+                "ocr_extract_claim_info": 25,
+                "retrieve_user_info": 50,
+                "search_knowledge_base": 75,
+                "retrieve_similar_claims": 75,
+                "ocr": 25,
+                "rag_retrieval": 75,
+                "llm_decision": 100
+            }
+            progress = step_progress.get(current_step, 50)
+        else:
+            progress = 0.0
 
         return schemas.ClaimStatusResponse(
             claim_id=claim_id,
@@ -705,9 +409,22 @@ async def get_claim_decision(
         return schemas.ClaimDecisionResponse(
             id=decision.id,
             claim_id=decision.claim_id,
-            decision=decision.decision,
+            # Initial system decision
+            initial_decision=decision.initial_decision.value,
+            initial_confidence=decision.initial_confidence,
+            initial_reasoning=decision.initial_reasoning,
+            initial_decided_at=decision.initial_decided_at,
+            # Final reviewer decision
+            final_decision=decision.final_decision.value if decision.final_decision else None,
+            final_decision_by=decision.final_decision_by,
+            final_decision_by_name=decision.final_decision_by_name,
+            final_decision_at=decision.final_decision_at,
+            final_decision_notes=decision.final_decision_notes,
+            # Legacy fields for backwards compatibility
+            decision=decision.decision.value,
             confidence=decision.confidence,
             reasoning=decision.reasoning,
+            # Supporting data
             relevant_policies=decision.relevant_policies,
             similar_claims=decision.similar_claims,
             user_contract_info=decision.user_contract_info,
@@ -744,86 +461,20 @@ async def get_claim_logs(
 
         processing_logs = []
 
-        # Get agent_id and session_id from claim metadata
-        agent_id = claim.claim_metadata.get("llamastack_agent_id") if claim.claim_metadata else None
-        session_id = claim.claim_metadata.get("llamastack_session_id") if claim.claim_metadata else None
-
-        # Fetch LlamaStack session history if available
-        if agent_id and session_id:
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as http_client:
-                    response = await http_client.get(
-                        f"{settings.llamastack_endpoint}/v1/agents/{agent_id}/session/{session_id}"
-                    )
-
-                    if response.status_code == 200:
-                        session_data = response.json()
-                        turns = session_data.get("turns", [])
-
-                        for turn in turns:
-                            steps = turn.get("steps", [])
-                            for step in steps:
-                                step_type = step.get("step_type")
-
-                                # Only extract tool_execution steps (skip inference steps)
-                                if step_type == "tool_execution":
-                                    # LlamaStack puts tool data directly in step
-                                    tool_calls = step.get("tool_calls", [])
-                                    tool_responses = step.get("tool_responses", [])
-
-                                    for i, tool_call in enumerate(tool_calls):
-                                        tool_name = tool_call.get("tool_name", "unknown")
-
-                                        # Keep exact tool names for better frontend display
-                                        step_name = tool_name
-
-                                        # Map to agent names
-                                        if "ocr" in tool_name.lower():
-                                            agent_name = "ocr-agent"
-                                        elif "retrieve_user_info" in tool_name.lower():
-                                            agent_name = "rag-agent"
-                                        elif "retrieve_similar_claims" in tool_name.lower():
-                                            agent_name = "rag-agent"
-                                        elif "search_knowledge_base" in tool_name.lower():
-                                            agent_name = "rag-agent"
-                                        else:
-                                            agent_name = "unknown"
-
-                                        # Get output data from tool_responses
-                                        output_data = None
-                                        if i < len(tool_responses):
-                                            tool_resp = tool_responses[i]
-                                            if isinstance(tool_resp, dict):
-                                                # Content is in tool_resp.content which is a list
-                                                content_list = tool_resp.get("content", [])
-                                                if content_list and len(content_list) > 0:
-                                                    # Extract text from first content item
-                                                    first_content = content_list[0]
-                                                    if isinstance(first_content, dict) and "text" in first_content:
-                                                        text_content = first_content["text"]
-                                                        # Try to parse as JSON
-                                                        try:
-                                                            output_data = json.loads(text_content)
-                                                        except:
-                                                            output_data = {"raw_text": text_content}
-                                                    else:
-                                                        output_data = first_content
-                                            else:
-                                                output_data = str(tool_resp)
-
-                                        processing_logs.append(schemas.ProcessingStepLog(
-                                            step_name=step_name,
-                                            agent_name=agent_name,
-                                            status="completed",
-                                            duration_ms=0,
-                                            started_at=step.get("started_at"),
-                                            completed_at=step.get("completed_at"),
-                                            output_data=output_data,
-                                            error_message=None
-                                        ))
-
-            except Exception as e:
-                logger.warning(f"Could not fetch LlamaStack session history: {str(e)}")
+        # Read processing steps from claim metadata (saved during processing)
+        if claim.claim_metadata and 'processing_steps' in claim.claim_metadata:
+            saved_steps = claim.claim_metadata['processing_steps']
+            for step in saved_steps:
+                processing_logs.append(schemas.ProcessingStepLog(
+                    step_name=step.get('step_name', 'unknown'),
+                    agent_name=step.get('agent_name', 'unknown'),
+                    status=step.get('status', 'completed'),
+                    duration_ms=step.get('duration_ms'),
+                    started_at=None,
+                    completed_at=None,
+                    output_data=step.get('output_data'),
+                    error_message=step.get('error_message')
+                ))
 
         return schemas.ClaimLogsResponse(
             claim_id=claim_id,
@@ -871,6 +522,47 @@ async def get_claim_statistics(db: AsyncSession = Depends(get_db)):
 
     except Exception as e:
         logger.error(f"Error getting statistics: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# GET /{claim_id}/guardrails - Get Guardrails Detections
+# =============================================================================
+
+@router.get("/{claim_id}/guardrails", response_model=schemas.GuardrailsDetectionsListResponse)
+async def get_guardrails_detections(
+    claim_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get guardrails PII/safety detections for a claim."""
+    try:
+        # Verify claim exists
+        claim_query = select(models.Claim).where(models.Claim.id == claim_id)
+        claim_result = await db.execute(claim_query)
+        claim = claim_result.scalar_one_or_none()
+
+        if not claim:
+            raise HTTPException(status_code=404, detail="Claim not found")
+
+        # Get all guardrails detections
+        detections_query = (
+            select(models.GuardrailsDetection)
+            .where(models.GuardrailsDetection.claim_id == claim_id)
+            .order_by(models.GuardrailsDetection.detected_at.desc())
+        )
+        result = await db.execute(detections_query)
+        detections = result.scalars().all()
+
+        return schemas.GuardrailsDetectionsListResponse(
+            claim_id=claim_id,
+            detections=[schemas.GuardrailsDetectionResponse.model_validate(d) for d in detections],
+            total=len(detections)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting guardrails detections: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

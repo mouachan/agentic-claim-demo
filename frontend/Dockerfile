@@ -3,6 +3,11 @@ USER root
 COPY upload/src /tmp/src
 RUN chown -R 1001:0 /tmp/src
 USER 1001
+
+# Configure npm with build arg (optional)
+ARG NPM_CONFIG_STRICT_SSL=true
+RUN npm config set strict-ssl ${NPM_CONFIG_STRICT_SSL}
+
 RUN /usr/libexec/s2i/assemble
 
 FROM registry.redhat.io/ubi10/nginx-126:latest

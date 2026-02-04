@@ -1,5 +1,13 @@
 // Type definitions for Claims Demo
 
+export interface AgentLogEntry {
+  type: 'reviewer_question' | 'agent_answer' | 'approve' | 'reject' | 'request_info' | 'comment'
+  timestamp: string
+  reviewer_id?: string
+  reviewer_name?: string
+  message: string
+}
+
 export interface Claim {
   id: string
   user_id: string
@@ -11,21 +19,22 @@ export interface Claim {
   processed_at?: string
   total_processing_time_ms?: number
   metadata?: Record<string, any>
+  agent_logs?: AgentLogEntry[]
   created_at: string
   updated_at: string
 }
 
-export type ClaimStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'manual_review'
+export type ClaimStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'manual_review' | 'pending_info'
 
 export interface ProcessingStepLog {
   step_name: string
   agent_name: string
   status: string
-  duration_ms: number
-  started_at: string
-  completed_at?: string
+  duration_ms?: number | null
+  started_at?: string | null
+  completed_at?: string | null
   output_data?: Record<string, any>
-  error_message?: string
+  error_message?: string | null
 }
 
 export interface ClaimStatusResponse {
@@ -40,9 +49,22 @@ export interface ClaimStatusResponse {
 export interface ClaimDecision {
   id: string
   claim_id: string
+  // Initial system decision
+  initial_decision: 'approve' | 'deny' | 'manual_review'
+  initial_confidence?: number
+  initial_reasoning?: string
+  initial_decided_at?: string
+  // Final reviewer decision
+  final_decision?: 'approve' | 'deny' | 'manual_review'
+  final_decision_by?: string
+  final_decision_by_name?: string
+  final_decision_at?: string
+  final_decision_notes?: string
+  // Legacy fields for backwards compatibility
   decision: 'approve' | 'deny' | 'manual_review'
-  confidence: number
-  reasoning: string
+  confidence?: number
+  reasoning?: string
+  // Supporting data
   relevant_policies?: Record<string, any>
   similar_claims?: Record<string, any>
   user_contract_info?: Record<string, any>

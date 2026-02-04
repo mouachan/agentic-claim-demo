@@ -4,7 +4,7 @@
 # =============================================================================
 global:
   # OpenShift cluster domain (replace with your cluster domain)
-  clusterDomain: "apps.cluster-rk6mx.rk6mx.sandbox492.opentlc.com"
+  clusterDomain: "apps.cluster-xxxxx.xxxxx.sandboxYYYY.opentlc.com"  # Replace with your cluster domain
 
   # Namespace where all resources will be deployed
   namespace: claims-demo
@@ -108,7 +108,7 @@ postgresql:
   # Resources
   resources:
     requests:
-      cpu: 500m
+      cpu: 250m
       memory: 1Gi
     limits:
       cpu: 2000m
@@ -124,13 +124,14 @@ postgresql:
 # =============================================================================
 llamastack:
   enabled: true
+  fromRhoai: true  # Use RHOAI LlamaStack service name
 
   # Route (OpenShift)
   route:
     enabled: true
     host: ""  # Auto-generated if empty
     tls:
-      enabled: false
+      enabled: true  # Enable TLS edge termination
 
   # Model configuration
   model:
@@ -143,6 +144,12 @@ llamastack:
     # endpoint defaults to that of InferenceService deployed as part of this Chart
     # endpoint: "https://embeddinggemma-300m-edg-demo.apps.CLUSTER_DOMAIN/v1"
     dimension: 768
+
+  # Database configuration (LlamaStack uses separate database)
+  database:
+    name: llamastack
+    user: llamastack
+    # Password configured via external values file (not in git)
 
   # Resources
   resources:
@@ -164,7 +171,7 @@ mcp:
 
     image:
       repository: ocr-server
-      tag: latest
+      tag: v1.3
 
     service:
       type: ClusterIP
@@ -173,16 +180,20 @@ mcp:
     # Environment variables
     env:
       OCR_LANGUAGES: "en,fr"
-      OCR_GPU_ENABLED: "false"
+      OCR_GPU_ENABLED: "true"
       LOG_LEVEL: "INFO"
 
     resources:
       requests:
         cpu: 500m
         memory: 2Gi
+        nvidia.com/gpu: "1"
       limits:
         cpu: 2000m
         memory: 4Gi
+        nvidia.com/gpu: "1"
+
+    placement: {}
 
   # RAG Server
   rag:
@@ -191,7 +202,7 @@ mcp:
 
     image:
       repository: rag-server
-      tag: latest
+      tag: v1.3
 
     service:
       type: ClusterIP
@@ -223,7 +234,7 @@ backend:
   # Image
   image:
     repository: backend
-    tag: latest
+    tag: v1.3
 
   # Service
   service:
@@ -235,7 +246,13 @@ backend:
     enabled: true
     host: ""  # Auto-generated if empty
     tls:
-      enabled: false
+      enabled: true  # Enable TLS edge termination
+
+  pvc:
+    accessMode: ReadWriteOnce
+    initPvc: false
+    size: 5Gi
+    storageClass: ""
 
   pvc:
     accessMode: ReadWriteOnce
@@ -249,6 +266,10 @@ backend:
     ENVIRONMENT: "production"
     DEBUG: "false"
     LOG_LEVEL: "INFO"
+
+  # Admin & Database Reset
+  # URL to seed data SQL file (configure to point to your GitHub repository)
+  seedDataUrl: "https://raw.githubusercontent.com/mouachan/agentic-claim-demo/refactor/v1.5-architecture/database/seed_data/001_sample_data.sql"
 
   # Resources
   resources:
@@ -271,7 +292,7 @@ frontend:
   # Image
   image:
     repository: frontend
-    tag: latest
+    tag: v1.3
 
   # Service
   service:
@@ -283,7 +304,7 @@ frontend:
     enabled: true
     host: ""  # Auto-generated if empty
     tls:
-      enabled: false
+      enabled: true  # Enable TLS edge termination
 
   # Resources
   resources:
@@ -297,7 +318,7 @@ frontend:
 hfcli:
   image:
     repository: hfcli
-    tag: latest
+    tag: v1.3
   resources:
     requests:
       cpu: "1"
@@ -321,3 +342,205 @@ secrets:
 
   # Create secrets automatically
   create: true
+
+# =============================================================================
+# MinIO (S3-compatible object storage for Data Science Pipelines)
+# =============================================================================
+minio:
+  enabled: false  # Disabled by default - required for RHOAI Data Science Pipelines
+
+  # Image configuration
+  image:
+    repository: quay.io/minio/minio
+    tag: latest
+
+  # Root credentials
+  rootUser: "admin"
+  rootPassword: "ClaimsDemo2026!"
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    apiPort: 9000
+    consolePort: 9001
+
+  # Route configuration
+  route:
+    api:
+      enabled: true
+      host: ""  # Auto-generated if empty
+      tls:
+        enabled: true  # Enable TLS edge termination
+    console:
+      enabled: true
+      host: ""  # Auto-generated if empty
+      tls:
+        enabled: true  # Enable TLS edge termination
+
+  # Persistence
+  persistence:
+    enabled: true
+    size: 20Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""  # Use default storage class if empty
+
+  # Resources
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# =============================================================================
+# Data Science Pipelines (RHOAI Kubeflow Pipelines)
+# =============================================================================
+dataSciencePipelines:
+  enabled: false  # Disabled by default - requires RHOAI 3.0+ and MinIO
+
+  # DSP version (v1 or v2)
+  dspVersion: v2
+
+  # API Server configuration
+  apiServer:
+    enableSamplePipeline: false
+    enableOauth: true
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  # Database configuration
+  database:
+    useExternal: true  # Use external PostgreSQL instead of internal MariaDB
+
+    # External PostgreSQL configuration
+    externalDB:
+      host: postgresql-service
+      port: "5432"
+      username: pipelines_user
+      pipelineDBName: pipelines_db
+      # Password will be stored in a secret
+
+    # Internal MariaDB configuration (used if useExternal: false)
+    mariaDB:
+      pipelineDBName: mlpipeline
+      pvcSize: 10Gi
+      username: mlpipeline
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi
+
+  # Object Storage (MinIO) configuration
+  objectStorage:
+    useInternalMinio: true  # Use the MinIO deployed by this chart
+    enableExternalRoute: false
+    basePath: ""
+    bucket: pipelines
+    host: ""  # Auto-configured if useInternalMinio: true
+    port: ""
+    region: us-east-1
+    scheme: http
+    s3CredentialsSecret:
+      accessKey: AWS_ACCESS_KEY_ID
+      secretKey: AWS_SECRET_ACCESS_KEY
+      secretName: ""  # Auto-configured if useInternalMinio: true
+
+  # Persistence Agent configuration
+  persistenceAgent:
+    numWorkers: 2
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  # Scheduled Workflow configuration
+  scheduledWorkflow:
+    cronScheduleTimezone: UTC
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+  # Pod-to-pod TLS
+  podToPodTLS: true
+
+# =============================================================================
+# Guardrails (TrustyAI)
+# =============================================================================
+guardrails:
+  enabled: true  # Enable PII detection with TrustyAI guardrails
+
+  name: claims-guardrails
+  configMapName: claims-guardrails-config
+
+  # GuardrailsOrchestrator configuration
+  enableBuiltInDetectors: true  # Enable HAP, PII detectors as sidecars
+  enableGuardrailsGateway: false
+  replicas: 1
+  logLevel: "info"
+
+  tls:
+    enabled: false
+
+  # Chat generation service (LlamaStack)
+  chatGeneration:
+    hostname: claims-llamastack-service.claims-demo.svc.cluster.local
+    port: 8321
+
+  # Detector configurations for ConfigMap
+  detectors:
+    regex:
+      threshold: 0.5
+    hap:
+      threshold: 0.5
+    pii:
+      threshold: 0.7
+
+    # Llama Guard 3 1B detector InferenceService
+    llamaGuard:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 1
+      storageUri: "oci://quay.io/rh-aiservices-bu/llama-guard-3-1b-modelcar:2.0.0"
+      resources:
+        requests:
+          cpu: "1"
+          memory: 8Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 10Gi
+          nvidia.com/gpu: "1"
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+      placement: {}
+
+# =============================================================================
+# Tekton Pipelines (RHOAI Data Science Pipelines)
+# =============================================================================
+tekton:
+  enabled: false  # Disabled by default - requires Tekton/OpenShift Pipelines
+
+  # Embedding model for generating vectors
+  embeddingModel: gemma-300m
+
+  # Workspace PVC for pipeline tasks
+  workspace:
+    size: 5Gi
+    storageClass: ""  # Use default storage class

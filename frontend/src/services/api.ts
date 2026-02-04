@@ -66,4 +66,37 @@ export const claimsApi = {
   },
 }
 
+// Review API (HITL)
+export const reviewApi = {
+  // Submit review action
+  submitAction: async (
+    claimId: string,
+    action: { action: string; comment: string; reviewerId: string; reviewerName: string }
+  ) => {
+    const response = await apiClient.post(`/review/${claimId}/action`, action)
+    return response.data
+  },
+
+  // Ask agent a question
+  askAgent: async (
+    claimId: string,
+    question: string,
+    reviewerId: string,
+    reviewerName: string
+  ) => {
+    const response = await apiClient.post(`/review/${claimId}/ask-agent`, {
+      question,
+      reviewer_id: reviewerId,
+      reviewer_name: reviewerName,
+    })
+    return response.data
+  },
+
+  // Get review messages
+  getMessages: async (claimId: string) => {
+    const response = await apiClient.get(`/review/${claimId}/messages`)
+    return response.data
+  },
+}
+
 export default apiClient

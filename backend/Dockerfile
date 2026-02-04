@@ -20,12 +20,12 @@ RUN dnf install -y --nodocs postgresql-devel && \
 WORKDIR /opt/app-root/src
 
 # Copy and install Python dependencies (as root for permissions)
-COPY backend/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY backend/app ./app
+COPY app ./app
 
 # Fix permissions and switch to default user
 RUN chown -R 1001:0 /opt/app-root && \

@@ -362,42 +362,10 @@ Be professional, accurate, and prioritize the user's interests while following p
 
 
 # User message templates (defaults)
-_USER_MESSAGE_OCR_ONLY_DEFAULT = """
-Extract text from this document: {document_path}
-
-Step 1: Call the ocr_document tool to extract the text.
-Step 2: After you receive the OCR results, summarize what was extracted and the confidence score.
-
-Provide a brief summary of the extracted content.
-"""
-
 _USER_MESSAGE_FULL_WORKFLOW_DEFAULT = """
-Process this insurance claim:
+Process the following insurance claim according to the workflow steps defined in your instructions.
 
-Claim ID: {claim_id}
-User ID: {user_id}
-Document Path: {document_path}
-Claim Type: {claim_type}
-
-Please:
-1. Extract all information from the document using OCR
-2. Retrieve the user's insurance contracts and coverage details
-3. Find similar historical claims for precedent
-4. Determine if the claim should be approved, denied, or requires manual review
-5. Provide detailed reasoning citing relevant policy sections
-
-Return your final decision as JSON:
-{{
-    "recommendation": "approve" | "deny" | "manual_review",
-    "confidence": 0.0-1.0,
-    "reasoning": "detailed explanation",
-    "relevant_policies": ["policy1", "policy2"],
-    "estimated_coverage_amount": 1234.56
-}}
-
-Workflow configuration:
-- Skip OCR: {skip_ocr}
-- Enable RAG retrieval: {enable_rag}
+Analyze all provided data and make your decision based on the claim details, user contracts, and any relevant historical precedents.
 """
 
 # Load ALL prompts from ConfigMap files (if mounted) or use defaults
@@ -412,11 +380,7 @@ CLAIMS_PROCESSING_AGENT_INSTRUCTIONS = load_prompt(
     _CLAIMS_PROCESSING_AGENT_DEFAULT
 )
 
-# User message templates
-USER_MESSAGE_OCR_ONLY_TEMPLATE = load_prompt(
-    "user-message-ocr-only.txt",
-    _USER_MESSAGE_OCR_ONLY_DEFAULT
-)
+# User message template
 USER_MESSAGE_FULL_WORKFLOW_TEMPLATE = load_prompt(
     "user-message-full-workflow.txt",
     _USER_MESSAGE_FULL_WORKFLOW_DEFAULT

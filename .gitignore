@@ -115,3 +115,5 @@ Thumbs.db
 # PostgreSQL
 *.sql.gz
 openshift/README-OPENSHIFT-AI.md
+helm/values-secrets-*.yaml
+TODO-LUNDI.md

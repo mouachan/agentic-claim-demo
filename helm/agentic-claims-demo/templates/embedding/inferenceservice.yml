@@ -16,6 +16,7 @@ metadata:
     networking.kserve.io/visibility: exposed
     opendatahub.io/dashboard: "true"
     opendatahub.io/genai-asset: "true"
+    serving.kserve.io/inferenceservice: gemma
     {{- include "agentic-claims-demo.labels" . | nindent 4 }}
   name: gemma
   namespace: {{ include "embedding.namespace" . }}

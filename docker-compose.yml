@@ -5,7 +5,7 @@ services:
   # PostgreSQL with pgvector
   postgresql:
     build:
-      content: ./database
+      context: ./database
       dockerfile: Dockerfile
     container_name: claims-postgres
     environment:

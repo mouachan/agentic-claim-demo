@@ -35,6 +35,12 @@ export default function Layout({ children }: LayoutProps) {
                 >
                   Claims
                 </Link>
+                <Link
+                  to="/admin"
+                  className={`${isActive('/admin')} inline-flex items-center px-4 py-2 text-sm font-medium rounded-md hover:bg-blue-700 transition-colors`}
+                >
+                  ⚙️ Admin
+                </Link>
               </div>
             </div>
             <div className="flex items-center">

@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     llamastack_embedding_dimension: int = 768
     llamastack_timeout: int = 300  # seconds
     llamastack_max_retries: int = 3
+    llamastack_max_tokens: int = 4096  # max tokens for responses (avoid exceeding model context)
 
     # MCP Servers
     ocr_server_url: str = "http://ocr-server.claims-demo.svc.cluster.local:8080"
@@ -74,6 +75,10 @@ class Settings(BaseSettings):
     guardrails_server_url: str = (
         "http://claims-guardrails.claims-demo.svc.cluster.local:8080"
     )
+
+    # Guardrails/Shields Configuration
+    enable_pii_detection: bool = False  # Set to True to enable PII detection via shields
+    pii_shield_id: str = "pii_detector"  # LlamaStack shield ID for PII detection
 
     # CORS - default to restrictive, override in production via env vars
     cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8080"]
@@ -94,6 +99,11 @@ class Settings(BaseSettings):
     max_processing_time_seconds: int = 300
     default_workflow_type: str = "standard"
     enable_async_processing: bool = True
+
+    # Admin & Database Reset
+    # Configure this to point to your GitHub repository branch
+    # Example: https://raw.githubusercontent.com/your-org/agentic-claim-demo/main/database/seed_data/001_sample_data.sql
+    seed_data_url: str = ""  # Must be set via SEED_DATA_URL env var
 
     # Logging
     log_level: str = "INFO"

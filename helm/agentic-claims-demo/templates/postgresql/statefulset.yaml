@@ -35,12 +35,18 @@ spec:
             # https://github.com/pgvector/pgvector/tree/master
             - name: POSTGRESQL_EXTENSIONS
               value: vector
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           # closest match would be:
           # image: registry.redhat.io/rhel8/postgresql-15:1
           # yet missing vector extension ... let's try 16?
           # image: registry.redhat.io/rhel10/postgresql-16:10.1
           # no better ... let's build our own, then ...
+          {{- if contains "/" .Values.postgresql.image.repository }}
+          image: {{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+          {{- else }}
           image: {{ .Values.global.imageRegistry }}/{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+          {{- end }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           livenessProbe:
             failureThreshold: 3
@@ -85,17 +91,21 @@ spec:
             - mountPath: /scripts
               name: empty
               subPath: database
-            - mountPath: /var/lib/pgsql
+            - mountPath: /var/lib/postgresql
               name: tmp
 {{- if .Values.postgresql.persistence.enabled }}
-            - mountPath: /var/lib/pgsql/data
+            - mountPath: /var/lib/postgresql/data
               name: data
 {{- end }}
       dnsPolicy: ClusterFirst
       initContainers:
         - command:
             - /scripts/init.sh
+          {{- if contains "/" .Values.postgresql.image.repository }}
+          image: {{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+          {{- else }}
           image: {{ .Values.global.imageRegistry }}/{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+          {{- end }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           name: initsecrets
           resources:

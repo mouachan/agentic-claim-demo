@@ -141,9 +141,21 @@ llamastack-rhoai-{{ .Values.global.namespace }}
 {{- end }}
 
 {{- define "llamastack.endpoint" -}}
-{{- if .Values.llamastack.fromRhoai -}}
 http://llamastack-rhoai-service.{{ include "agentic-claims-demo.namespace" . }}.svc.cluster.local:8321
-{{- else -}}
-http://llamastack-test-v035.{{ include "agentic-claims-demo.namespace" . }}.svc.cluster.local:8321
 {{- end -}}
+
+{{- define "llamastack.model" -}}
+{{ .Values.inference.model.name }}
+{{- end -}}
+
+{{- define "llamastack.inferenceEndpoint" -}}
+https://llama-llama-3-3-70b.{{ .Values.global.clusterDomain }}/v1
+{{- end -}}
+
+{{- define "llamastack.embeddingModel" -}}
+{{ .Values.embedding.model.name }}
+{{- end -}}
+
+{{- define "llamastack.embeddingEndpoint" -}}
+https://gemma-embeddinggemma-300m.{{ .Values.global.clusterDomain }}/v1
 {{- end -}}
