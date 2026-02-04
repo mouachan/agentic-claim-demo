@@ -19,7 +19,7 @@ backend:
   enabled: true
   image:
     repository: quay.io/your-org/backend
-    tag: v1.7.5
+    tag: v2.0.0
     pullPolicy: IfNotPresent
   replicas: 1
 
@@ -47,7 +47,7 @@ frontend:
   enabled: true
   image:
     repository: quay.io/your-org/frontend
-    tag: v1.7.5
+    tag: v2.0.0
     pullPolicy: IfNotPresent
   replicas: 1
 
@@ -73,7 +73,7 @@ ocr:
   enabled: true
   image:
     repository: quay.io/your-org/ocr-server
-    tag: v1.7.5
+    tag: v2.0.0
 
   resources:
     requests:
@@ -91,7 +91,7 @@ rag:
   enabled: true
   image:
     repository: quay.io/your-org/rag-server
-    tag: v1.7.5
+    tag: v2.0.0
 
   resources:
     requests:
@@ -384,12 +384,12 @@ global:
 backend:
   image:
     repository: quay.io/your-org/backend
-    tag: v1.7.5
+    tag: v2.0.0
 
 frontend:
   image:
     repository: quay.io/your-org/frontend
-    tag: v1.7.5
+    tag: v2.0.0
 
 inference:
   endpoint: "https://llama-3-3-70b-llama-3-3-70b.apps.your-cluster.com/v1"

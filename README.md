@@ -271,22 +271,22 @@ Pre-built images are available on Quay.io:
 backend:
   image:
     repository: quay.io/mouachan/agentic-claims-demo/backend
-    tag: v1.7.5
+    tag: v2.0.0
 
 frontend:
   image:
     repository: quay.io/mouachan/agentic-claims-demo/frontend
-    tag: v1.7.5
+    tag: v2.0.0
 
 ocr:
   image:
     repository: quay.io/mouachan/agentic-claims-demo/ocr-server
-    tag: v1.7.5
+    tag: v2.0.0
 
 rag:
   image:
     repository: quay.io/mouachan/agentic-claims-demo/rag-server
-    tag: v1.7.5
+    tag: v2.0.0
 
 postgresql:
   image:
@@ -504,7 +504,7 @@ global:
 backend:
   image:
     repository: quay.io/mouachan/agentic-claims-demo/backend
-    tag: v1.7.5
+    tag: v2.0.0
   replicas: 1
 
 postgresql:
@@ -692,7 +692,7 @@ Includes:
 - **Knowledge Base**: Run pipeline to generate 15/15 embeddings
 - **Similar Claims**: May return zero results if embeddings missing
 
-### Current Version: v1.7.5
+### Current Version: v2.0.0
 
 **Working**:
 - ✅ End-to-end claim processing
