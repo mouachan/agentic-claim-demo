@@ -60,10 +60,10 @@ data:
 {{- if .Values.guardrails.enabled }}
       - provider_id: trustyai_fms
         provider_type: remote::trustyai_fms
+        module: llama_stack_provider_trustyai_fms
         config:
-          # GuardrailsOrchestrator API endpoint
-          url: http://{{ .Values.guardrails.name }}-service.{{ include "agentic-claims-demo.namespace" . }}.svc.cluster.local:8032
-          tls_verify: false
+          orchestrator_url: ${env.FMS_ORCHESTRATOR_URL}
+          verify_ssl: false
 {{- else }}
       []
 {{- end }}
@@ -178,18 +178,25 @@ data:
 
       shields:
 {{- if .Values.guardrails.enabled }}
-      # PII Detection Shield
+      # PII Detection Shield using regex detector
       - shield_id: pii_detector
         provider_shield_id: pii_detector
         provider_id: trustyai_fms
         params:
           type: content
-          confidence_threshold: {{ .Values.guardrails.detectors.pii.threshold }}
-          message_types: ["user", "assistant"]
+          confidence_threshold: {{ .Values.guardrails.detectors.regex.threshold | default 0.5 }}
+          message_types:
+            - system
+            - user
+          verify_ssl: false
           detectors:
-            pii:
+            regex:
               detector_params:
-                entity_types: ["EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "US_SSN", "DATE_TIME", "PERSON", "LOCATION"]
+                regex:
+                  - email
+                  - us-social-security-number
+                  - credit-card
+                  - phone
 {{- else }}
       []
 {{- end }}

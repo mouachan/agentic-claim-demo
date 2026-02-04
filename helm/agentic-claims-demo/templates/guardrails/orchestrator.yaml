@@ -3,32 +3,18 @@
 apiVersion: trustyai.opendatahub.io/v1alpha1
 kind: GuardrailsOrchestrator
 metadata:
-  name: {{ .Values.guardrails.name }}
+  name: guardrails-orchestrator
   namespace: {{ include "agentic-claims-demo.namespace" . }}
   labels:
     {{- include "agentic-claims-demo.labels" . | nindent 4 }}
     app: claims-processing
     component: guardrails
   annotations:
-    argocd.argoproj.io/sync-wave: "5" # after llamastack and detectors
+    argocd.argoproj.io/sync-wave: "5"
 spec:
-  # Manual configuration - no autoConfig (LlamaStack is not a KServe InferenceService)
-  # Use orchestratorConfig for manual detector configuration
-  orchestratorConfig: {{ .Values.guardrails.configMapName | quote }}
-
-  # Enable built-in TrustyAI detectors (HAP, PII, etc.) as sidecars
+  orchestratorConfig: "fms-orchestr8-config-nlp"
   enableBuiltInDetectors: {{ .Values.guardrails.enableBuiltInDetectors }}
-
-  # Disable guardrails gateway
-  enableGuardrailsGateway: {{ .Values.guardrails.enableGuardrailsGateway }}
-
-  # Number of replicas
+  enableGuardrailsGateway: false
   replicas: {{ .Values.guardrails.replicas }}
-
-  # Log level
   logLevel: {{ .Values.guardrails.logLevel | quote }}
-
-  # TLS configuration
-  tls:
-    enabled: {{ .Values.guardrails.tls.enabled }}
 {{- end }}

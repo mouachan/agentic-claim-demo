@@ -116,7 +116,8 @@ class ResponsesOrchestrator:
                 "model": agent_config.get("model", self.model),
                 "input": input_message,  # Can be string or array of messages
                 "stream": False,
-                "max_infer_iters": 10
+                "max_infer_iters": 10,
+                "max_tokens": settings.llamastack_max_tokens  # Configurable via env var
             }
 
             # Add instructions from agent_config

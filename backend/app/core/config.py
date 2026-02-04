@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     llamastack_embedding_dimension: int = 768
     llamastack_timeout: int = 300  # seconds
     llamastack_max_retries: int = 3
+    llamastack_max_tokens: int = 4096  # max tokens for responses (avoid exceeding model context)
 
     # MCP Servers
     ocr_server_url: str = "http://ocr-server.claims-demo.svc.cluster.local:8080"
