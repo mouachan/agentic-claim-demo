@@ -1,10 +1,15 @@
-# Agentic Insurance Claims Processing Demo
+# Agentic Multi-Domain Decision Platform
 
-An intelligent insurance claims processing system powered by AI agents on Red Hat OpenShift AI, demonstrating autonomous decision-making through **ReAct (Reasoning + Acting)** workflows with built-in compliance guardrails.
+An intelligent multi-agent decision platform powered by AI agents on Red Hat OpenShift AI, demonstrating autonomous decision-making through **ReAct (Reasoning + Acting)** workflows with built-in compliance guardrails. The platform supports **multiple business domains** with a shared agent infrastructure:
+
+- **Insurance Claims Processing** — Approve/Deny/Manual Review decisions
+- **Tender Management (Appels d'Offres)** — Go/No-Go decisions for construction (BTP) tenders
 
 ## 📋 Table of Contents
 
 - [Business Overview](#business-overview)
+  - [Use Case 1: Insurance Claims](#use-case-1-insurance-claims-processing)
+  - [Use Case 2: Tender Management](#use-case-2-tender-management-appels-doffres)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Deployment](#deployment)
@@ -20,7 +25,27 @@ An intelligent insurance claims processing system powered by AI agents on Red Ha
 
 ### What Problem Does This Solve?
 
-Insurance claims processing traditionally requires manual review of documents, policy lookups, and precedent analysis—a time-consuming process prone to inconsistencies. This demo showcases how AI agents can **autonomously** process claims through intelligent reasoning and tool usage, while maintaining human oversight where needed.
+Many business processes require expert analysis of documents, comparison with historical data, and structured decision-making — tasks that are time-consuming and prone to inconsistencies. This platform showcases how AI agents can **autonomously** process these tasks through intelligent reasoning and tool usage, while maintaining human oversight where needed.
+
+The platform demonstrates this through two use cases that share the same agent infrastructure:
+
+### Use Case 1: Insurance Claims Processing
+
+- Autonomous document processing via OCR
+- Smart policy matching via semantic search through user contracts
+- Precedent-based reasoning using similar historical claims
+- Decision: **Approve / Deny / Manual Review** with confidence score
+
+### Use Case 2: Tender Management (Appels d'Offres)
+
+- Ingests tender documents (RFPs) and extracts key information via OCR
+- Analyzes the tender against the company's past project references, certifications, and historical tender outcomes using RAG similarity search
+- Generates a **Go / No-Go / Needs Deeper Review** recommendation with:
+  - Risk analysis (technical, financial, resources, competition)
+  - Win probability estimate
+  - Estimated margin
+  - Strengths and weaknesses
+- Supports Human-in-the-Loop review when confidence is low
 
 ### The ReAct Agentic Workflow
 
@@ -200,23 +225,31 @@ graph TB
 
 ### Services Architecture
 
-Clean separation of concerns for maintainability:
+Clean separation of concerns for maintainability. The modular architecture allows multiple business domains to share the same agent infrastructure:
 
 ```
 backend/
 ├── app/
-│   ├── api/              # Thin API layer (HTTP routing)
+│   ├── api/              # Thin HTTP layer (routing, validation, schemas)
+│   │   ├── claims.py     # Claims REST endpoints
+│   │   ├── tenders.py    # Tenders REST endpoints
+│   │   ├── hitl.py       # Human-in-the-Loop review endpoints
+│   │   └── admin.py      # Admin panel (database reset, stats)
 │   ├── services/         # Business logic
-│   │   ├── claim_service.py       # Orchestration
-│   │   └── agent/                 # AI components
-│   │       ├── responses_orchestrator.py  # LlamaStack client
-│   │       ├── context_builder.py         # Prompt building
-│   │       └── response_parser.py         # Parse AI output
+│   │   ├── claim_service.py       # Claims orchestration
+│   │   ├── tender_service.py      # Tenders orchestration
+│   │   └── agent/                 # Shared AI components
+│   │       ├── responses_orchestrator.py  # LlamaStack Responses API client
+│   │       ├── context_builder.py         # Prompt building with domain context
+│   │       ├── response_parser.py         # Extract structured decisions
+│   │       └── reviewer.py               # HITL "Ask Agent" logic
 │   ├── models/           # Database ORM
-│   └── llamastack/       # Prompts & integration
+│   │   ├── claim.py      # Claims, documents, decisions, users
+│   │   └── tender.py     # Tenders, documents, decisions, references
+│   └── llamastack/       # Prompts & integration config
 ```
 
-**Benefits**: Testable, reusable, clear responsibilities.
+**Benefits**: Each domain (claims, tenders) has its own service and API layer, but shares the agent infrastructure (orchestrator, context builder, response parser). Adding a new use case only requires a new service, API, and model — no changes to the AI components.
 
 ### Technology Stack
 
@@ -367,7 +400,7 @@ After deployment, run the embedding generation pipeline:
    ![Import Pipeline](assets/pipeline-import.png)
 
    - Click "Import pipeline"
-   - Upload: `backend/pipelines/data_initialization_pipeline.yaml`
+   - Upload: `pipelines/data_initialization_pipeline.yaml`
    - Name: "Historical Claims Initialization"
 
 3. **Create Pipeline Run**:
@@ -692,11 +725,13 @@ Includes:
 - **Knowledge Base**: Run pipeline to generate 15/15 embeddings
 - **Similar Claims**: May return zero results if embeddings missing
 
-### Current Version: v2.0.0
+### Current Version: v2.1.0 (multi-agents)
 
 **Working**:
 - ✅ End-to-end claim processing
+- ✅ End-to-end tender (Appels d'Offres) processing
 - ✅ PII detection & audit trail
-- ✅ HITL review workflow
+- ✅ HITL review workflow (claims & tenders)
 - ✅ Ask Agent feature
+- ✅ Multi-agent architecture with shared infrastructure
 
