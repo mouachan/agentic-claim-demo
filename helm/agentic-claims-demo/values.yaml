@@ -222,6 +222,21 @@ mcp:
         memory: 6Gi
 
 # =============================================================================
+# Agents Configuration
+# =============================================================================
+agents:
+  claims:
+    enabled: true
+    name: "Insurance Claims Processing"
+    promptsConfigMap: claims-prompts
+    promptsMountPath: /app/prompts
+  tenders:
+    enabled: true
+    name: "Appels d'Offres Vinci"
+    promptsConfigMap: ao-prompts
+    promptsMountPath: /app/prompts-ao
+
+# =============================================================================
 # Backend API
 # =============================================================================
 backend:
@@ -531,16 +546,3 @@ guardrails:
           operator: Exists
       placement: {}
 
-# =============================================================================
-# Tekton Pipelines (RHOAI Data Science Pipelines)
-# =============================================================================
-tekton:
-  enabled: false  # Disabled by default - requires Tekton/OpenShift Pipelines
-
-  # Embedding model for generating vectors
-  embeddingModel: gemma-300m
-
-  # Workspace PVC for pipeline tasks
-  workspace:
-    size: 5Gi
-    storageClass: ""  # Use default storage class

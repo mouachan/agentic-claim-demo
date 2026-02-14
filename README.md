@@ -367,7 +367,7 @@ After deployment, run the embedding generation pipeline:
    ![Import Pipeline](assets/pipeline-import.png)
 
    - Click "Import pipeline"
-   - Upload: `backend/pipelines/data_initialization_pipeline.yaml`
+   - Upload: `pipelines/data_initialization_pipeline.yaml`
    - Name: "Historical Claims Initialization"
 
 3. **Create Pipeline Run**:
