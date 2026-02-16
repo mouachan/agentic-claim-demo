@@ -16,29 +16,58 @@ logger = logging.getLogger(__name__)
 class ResponsesOrchestrator:
     """Orchestrate LLM interactions using Responses API with automatic tool execution."""
 
-    def __init__(self, base_url: Optional[str] = None, timeout: float = 300.0):
+    @staticmethod
+    def _default_mcp_servers() -> Dict[str, Any]:
+        """Build MCP server configs from environment-driven settings."""
+        return {
+            "ocr-server": {
+                "server_label": "ocr-server",
+                "server_url": f"{settings.ocr_server_url}/sse"
+            },
+            "rag-server": {
+                "server_label": "rag-server",
+                "server_url": f"{settings.rag_server_url}/sse"
+            }
+        }
+
+    # Default tool-to-server mapping
+    DEFAULT_TOOL_TO_SERVER = {
+        "ocr_document": "ocr-server",
+        "ocr_health_check": "ocr-server",
+        "list_supported_formats": "ocr-server",
+        "retrieve_user_info": "rag-server",
+        "retrieve_similar_claims": "rag-server",
+        "search_knowledge_base": "rag-server",
+        "rag_health_check": "rag-server",
+        # AO (Appels d'Offres) tools - same RAG server
+        "retrieve_similar_references": "rag-server",
+        "retrieve_historical_tenders": "rag-server",
+        "retrieve_capabilities": "rag-server",
+    }
+
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        timeout: float = 300.0,
+        mcp_servers: Optional[Dict[str, Any]] = None,
+        tool_to_server: Optional[Dict[str, str]] = None,
+    ):
         """
         Initialize orchestrator.
 
         Args:
             base_url: LlamaStack endpoint URL
             timeout: Request timeout in seconds
+            mcp_servers: Custom MCP server configurations (defaults to built-in servers)
+            tool_to_server: Custom tool-to-server mapping (defaults to built-in mapping)
         """
         self.base_url = base_url or settings.llamastack_endpoint
         self.timeout = timeout
         self.model = settings.llamastack_default_model
 
-        # MCP server configurations
-        self.mcp_servers = {
-            "ocr-server": {
-                "server_label": "ocr-server",
-                "server_url": "http://ocr-server.claims-demo.svc.cluster.local:8080/sse"
-            },
-            "rag-server": {
-                "server_label": "rag-server",
-                "server_url": "http://rag-server.claims-demo.svc.cluster.local:8080/sse"
-            }
-        }
+        # MCP server configurations - configurable per agent
+        self.mcp_servers = mcp_servers or self._default_mcp_servers()
+        self._tool_to_server = tool_to_server or self.DEFAULT_TOOL_TO_SERVER.copy()
 
     def _build_mcp_tools(self, tools: List[str]) -> List[Dict[str, Any]]:
         """
@@ -50,21 +79,10 @@ class ResponsesOrchestrator:
         Returns:
             List of MCP tool configurations
         """
-        # Map tools to their servers
-        tool_to_server = {
-            "ocr_document": "ocr-server",
-            "ocr_health_check": "ocr-server",
-            "list_supported_formats": "ocr-server",
-            "retrieve_user_info": "rag-server",
-            "retrieve_similar_claims": "rag-server",
-            "search_knowledge_base": "rag-server",
-            "rag_health_check": "rag-server"
-        }
-
-        # Group tools by server
+        # Group tools by server using configurable mapping
         servers_with_tools = {}
         for tool_name in tools:
-            server = tool_to_server.get(tool_name)
+            server = self._tool_to_server.get(tool_name)
             if not server:
                 logger.warning(f"Unknown tool: {tool_name}")
                 continue
@@ -145,20 +163,21 @@ class ResponsesOrchestrator:
             response.raise_for_status()
             result = response.json()
 
-            # DEBUG: Log full response structure to see available timing fields
-            import json
-            logger.info(f"LlamaStack full response: {json.dumps(result, indent=2)}")
-
             # Extract output
             output_items = result.get("output", [])
 
-            # Find the final message
-            final_message = None
+            # Collect ALL messages and tool calls
+            all_message_texts = []
             tool_calls = []
 
             for item in output_items:
                 if item.get("type") == "message":
-                    final_message = item
+                    # Extract text from each message
+                    for content_item in item.get("content", []):
+                        if content_item.get("type") == "output_text":
+                            text = content_item.get("text", "")
+                            if text.strip():
+                                all_message_texts.append(text)
                 elif item.get("type") == "mcp_call":
                     tool_calls.append({
                         "name": item.get("name"),
@@ -167,15 +186,21 @@ class ResponsesOrchestrator:
                         "error": item.get("error")
                     })
 
-            # Extract text content
-            output_text = ""
-            if final_message and "content" in final_message:
-                for content_item in final_message["content"]:
-                    if content_item.get("type") == "output_text":
-                        output_text = content_item.get("text", "")
-                        break
+            # Concatenate all message texts to capture JSON from any turn
+            output_text = "\n\n".join(all_message_texts)
 
-            logger.info(f"Response completed: tools_used={len(tool_calls)}")
+            # Log each tool call for debugging
+            for tc in tool_calls:
+                status = "ERROR" if tc.get("error") else "OK"
+                output_preview = ""
+                if tc.get("output"):
+                    output_preview = tc["output"][:200]
+                elif tc.get("error"):
+                    output_preview = tc["error"][:200]
+                logger.info(f"Tool call: {tc.get('name')} [{tc.get('server')}] -> {status}: {output_preview}")
+
+            logger.info(f"Response completed: tools_used={len(tool_calls)}, messages={len(all_message_texts)}")
+            logger.info(f"Full output text ({len(output_text)} chars):\n{output_text[:2000]}")
 
             # Return in AgentOrchestrator-compatible format
             return {

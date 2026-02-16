@@ -110,11 +110,36 @@ async def readiness():
         )
 
 
+@app.get(f"{settings.api_v1_prefix}/agents")
+async def list_agents():
+    """List available AI agents."""
+    return [
+        {
+            "id": "claims",
+            "name": "Insurance Claims Processing",
+            "description": "Automated insurance claims analysis with OCR, RAG, and decision-making",
+            "path": "/claims",
+            "api_prefix": "/api/v1/claims",
+            "color": "blue",
+            "tools": ["ocr_document", "retrieve_user_info", "retrieve_similar_claims", "search_knowledge_base"],
+        },
+        {
+            "id": "tenders",
+            "name": "Analyse Appels d'Offres",
+            "description": "Analyse automatisee d'appels d'offres BTP avec references, historique et capacites",
+            "path": "/tenders",
+            "api_prefix": "/api/v1/tenders",
+            "color": "amber",
+            "tools": ["ocr_document", "retrieve_similar_references", "retrieve_historical_tenders", "retrieve_capabilities"],
+        },
+    ]
+
+
 # =============================================================================
 # Import and Include API Routers
 # =============================================================================
 
-from app.api import claims, documents, hitl, admin
+from app.api import claims, documents, hitl, admin, tenders
 
 app.include_router(
     claims.router,
@@ -135,6 +160,11 @@ app.include_router(
     admin.router,
     prefix=f"{settings.api_v1_prefix}",
     tags=["admin"]
+)
+app.include_router(
+    tenders.router,
+    prefix=f"{settings.api_v1_prefix}/tenders",
+    tags=["tenders"]
 )
 
 

@@ -20,6 +20,57 @@ class ResponseFormat(Enum):
 class ResponseParser:
     """Parse agent responses into structured data."""
 
+    @staticmethod
+    def _extract_balanced_json(text: str, start: int) -> Optional[str]:
+        """
+        Extract a balanced JSON object starting at position start.
+        Handles nested braces, strings with escaped characters, etc.
+
+        Args:
+            text: Full text
+            start: Position of the opening '{'
+
+        Returns:
+            The balanced JSON string, or None if not found
+        """
+        if start >= len(text) or text[start] != '{':
+            return None
+
+        depth = 0
+        in_string = False
+        escape = False
+        i = start
+
+        while i < len(text):
+            ch = text[i]
+
+            if escape:
+                escape = False
+                i += 1
+                continue
+
+            if ch == '\\' and in_string:
+                escape = True
+                i += 1
+                continue
+
+            if ch == '"' and not escape:
+                in_string = not in_string
+                i += 1
+                continue
+
+            if not in_string:
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        return text[start:i + 1]
+
+            i += 1
+
+        return None
+
     def parse_decision(self, response_text: str) -> Dict[str, Any]:
         """
         Parse decision from agent response.
@@ -42,32 +93,59 @@ class ResponseParser:
         if not response_text:
             return decision_data
 
-        # Try JSON format first (with or without "json" keyword or code blocks)
-        # Try ```json first, then fall back to plain ```, then raw JSON
-        json_patterns = [
-            r'```(?:json)?\s*(\{.*?\})\s*```',  # ```json {...} ```
-            r'```\s*(\{.*?\})\s*```',  # ``` {...} ```
-            r'(\{\s*"recommendation".*?\})',  # Raw JSON starting with "recommendation"
-        ]
+        # Strategy 1: Find JSON in ```json ... ``` code blocks
+        code_block_pattern = r'```(?:json)?\s*'
+        for m in re.finditer(code_block_pattern, response_text, re.IGNORECASE):
+            block_start = m.end()
+            # Find opening brace
+            brace_pos = response_text.find('{', block_start)
+            if brace_pos != -1 and brace_pos - block_start < 10:
+                json_str = self._extract_balanced_json(response_text, brace_pos)
+                if json_str:
+                    try:
+                        parsed = json.loads(json_str)
+                        if isinstance(parsed, dict):
+                            decision_data.update(parsed)
+                            return decision_data
+                    except json.JSONDecodeError:
+                        continue
 
-        for pattern in json_patterns:
-            json_match = re.search(pattern, response_text, re.DOTALL | re.IGNORECASE)
-            if json_match:
+        # Strategy 2: Find raw JSON with "recommendation" key
+        for m in re.finditer(r'\{\s*"recommendation"', response_text):
+            json_str = self._extract_balanced_json(response_text, m.start())
+            if json_str:
                 try:
-                    parsed = json.loads(json_match.group(1))
-                    decision_data.update(parsed)
-                    return decision_data
+                    parsed = json.loads(json_str)
+                    if isinstance(parsed, dict):
+                        decision_data.update(parsed)
+                        return decision_data
                 except json.JSONDecodeError:
-                    continue  # Try next pattern
+                    continue
+
+        # Strategy 3: Find any JSON object containing recommendation-like keys
+        for m in re.finditer(r'\{', response_text):
+            json_str = self._extract_balanced_json(response_text, m.start())
+            if json_str and len(json_str) > 50:
+                try:
+                    parsed = json.loads(json_str)
+                    if isinstance(parsed, dict) and any(
+                        k in parsed for k in ['recommendation', 'decision', 'confidence']
+                    ):
+                        decision_data.update(parsed)
+                        return decision_data
+                except json.JSONDecodeError:
+                    continue
 
         # Fallback to text parsing
         text_lower = response_text.lower()
 
-        # Extract recommendation
-        if any(word in text_lower for word in ['approve', 'approved', 'accept']):
+        # Extract recommendation (French + English)
+        if any(word in text_lower for word in ['approve', 'approved', 'accept', '"go"', ': go', 'recommendation: go']):
             decision_data['recommendation'] = 'approve'
-        elif any(word in text_lower for word in ['deny', 'denied', 'reject']):
+        elif any(word in text_lower for word in ['deny', 'denied', 'reject', '"no_go"', 'no-go', 'no go']):
             decision_data['recommendation'] = 'deny'
+        elif any(word in text_lower for word in ['a_approfondir', 'à approfondir', 'approfondir']):
+            decision_data['recommendation'] = 'a_approfondir'
         elif any(word in text_lower for word in ['review', 'uncertain', 'manual']):
             decision_data['recommendation'] = 'manual_review'
 
@@ -75,7 +153,6 @@ class ResponseParser:
         confidence_match = re.search(r'confidence[:\s]+(\d+(?:\.\d+)?)\s*%?', text_lower)
         if confidence_match:
             conf_value = float(confidence_match.group(1))
-            # Normalize to 0-1 range if it's a percentage
             decision_data['confidence'] = conf_value / 100 if conf_value > 1 else conf_value
 
         # Extract reasoning

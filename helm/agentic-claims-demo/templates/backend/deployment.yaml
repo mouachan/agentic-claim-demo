@@ -67,6 +67,9 @@ spec:
             - mountPath: /app/prompts
               name: prompts
               readOnly: true
+            - mountPath: /app/prompts-ao
+              name: ao-prompts
+              readOnly: true
 {{- if and .Values.mcp.ocr.enabled (ne .Values.backend.pvc.accessMode "ReadWriteMany") }}
         - name: ocr-server
           image: {{ include "agentic-claims-demo.imageRegistry" . }}/{{ .Values.mcp.ocr.image.repository }}:{{ .Values.mcp.ocr.image.tag }}
@@ -115,4 +118,7 @@ spec:
         - name: prompts
           configMap:
             name: claims-prompts
+        - name: ao-prompts
+          configMap:
+            name: ao-prompts
 {{- end }}

@@ -47,6 +47,7 @@ services:
       OCR_SERVER_URL: http://ocr-server:8080
       RAG_SERVER_URL: http://rag-server:8080
       GUARDRAILS_SERVER_URL: http://guardrails-server:8080
+      AO_PROMPTS_DIR: "/app/prompts-ao"
       CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
     ports:
       - "8000:8000"

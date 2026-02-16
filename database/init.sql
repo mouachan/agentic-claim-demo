@@ -375,6 +375,246 @@ $$ LANGUAGE plpgsql;
 -- GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO claims_user;
 
 -- ============================================================================
+-- TENDER (APPELS D'OFFRES) TABLES
+-- ============================================================================
+
+-- Tenders main table
+CREATE TABLE tenders (
+    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id               VARCHAR(255),
+    tender_number           VARCHAR(100) UNIQUE,
+    tender_type             VARCHAR(100),
+    document_path           TEXT,
+    status                  VARCHAR(50) DEFAULT 'pending',
+    submitted_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    processed_at            TIMESTAMP,
+    total_processing_time_ms INTEGER,
+    is_archived             BOOLEAN DEFAULT FALSE,
+    metadata                JSONB DEFAULT '{}',
+    agent_logs              JSONB DEFAULT '[]',
+    created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_tenders_entity_id ON tenders(entity_id);
+CREATE INDEX idx_tenders_status ON tenders(status);
+CREATE INDEX idx_tenders_submitted_at ON tenders(submitted_at);
+CREATE INDEX idx_tenders_is_archived ON tenders(is_archived);
+
+-- Tender documents (OCR results + embeddings)
+CREATE TABLE tender_documents (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tender_id         UUID NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+    document_type     VARCHAR(100),
+    file_path         TEXT,
+    file_size_bytes   BIGINT,
+    mime_type         VARCHAR(100),
+    raw_ocr_text      TEXT,
+    structured_data   JSONB,
+    ocr_confidence    FLOAT,
+    ocr_processed_at  TIMESTAMP,
+    embedding         vector(768),
+    page_count        INTEGER,
+    language          VARCHAR(10) DEFAULT 'fra',
+    metadata          JSONB DEFAULT '{}',
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_tender_documents_tender_id ON tender_documents(tender_id);
+CREATE INDEX idx_tender_documents_embedding ON tender_documents USING ivfflat (embedding vector_cosine_ops);
+
+-- Tender decisions (Go/No-Go)
+CREATE TABLE tender_decisions (
+    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tender_id               UUID NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+    initial_decision        VARCHAR(50),
+    initial_confidence      FLOAT,
+    initial_reasoning       TEXT,
+    initial_decided_at      TIMESTAMP,
+    final_decision          VARCHAR(50),
+    final_decision_by       VARCHAR(255),
+    final_decision_by_name  VARCHAR(255),
+    final_decision_at       TIMESTAMP,
+    final_decision_notes    TEXT,
+    decision                VARCHAR(50),
+    confidence              FLOAT,
+    reasoning               TEXT,
+    risk_analysis           JSONB,
+    similar_references      JSONB,
+    historical_ao_analysis  JSONB,
+    internal_capabilities   JSONB,
+    llm_model               VARCHAR(100),
+    requires_manual_review  BOOLEAN DEFAULT FALSE,
+    decided_at              TIMESTAMP,
+    created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_tender_decisions_tender_id ON tender_decisions(tender_id);
+
+-- Tender processing logs
+CREATE TABLE tender_processing_logs (
+    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tender_id        UUID NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+    step             VARCHAR(50),
+    agent_name       VARCHAR(100),
+    started_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at     TIMESTAMP,
+    duration_ms      INTEGER,
+    status           VARCHAR(50),
+    input_data       JSONB,
+    output_data      JSONB,
+    error_message    TEXT,
+    confidence_score FLOAT,
+    tokens_used      INTEGER,
+    metadata         JSONB DEFAULT '{}',
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_tender_processing_logs_tender_id ON tender_processing_logs(tender_id);
+
+-- Vinci references (past project references)
+CREATE TABLE vinci_references (
+    id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    reference_number   VARCHAR(100) UNIQUE,
+    project_name       VARCHAR(500),
+    maitre_ouvrage     VARCHAR(255),
+    nature_travaux     VARCHAR(255),
+    montant            DECIMAL(15, 2),
+    date_debut         DATE,
+    date_fin           DATE,
+    region             VARCHAR(100),
+    description        TEXT,
+    certifications_used JSONB,
+    key_metrics        JSONB,
+    embedding          vector(768),
+    is_active          BOOLEAN DEFAULT TRUE,
+    metadata           JSONB DEFAULT '{}',
+    created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_vinci_references_embedding ON vinci_references USING ivfflat (embedding vector_cosine_ops);
+
+-- Vinci capabilities (certifications, resources, equipment)
+CREATE TABLE vinci_capabilities (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    category     VARCHAR(100),
+    name         VARCHAR(255),
+    description  TEXT,
+    valid_until  DATE,
+    region       VARCHAR(100),
+    availability VARCHAR(50),
+    details      JSONB,
+    embedding    vector(768),
+    is_active    BOOLEAN DEFAULT TRUE,
+    metadata     JSONB DEFAULT '{}',
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_vinci_capabilities_category ON vinci_capabilities(category);
+
+-- Historical tenders (past won/lost AOs)
+CREATE TABLE historical_tenders (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    ao_number         VARCHAR(100) UNIQUE,
+    maitre_ouvrage    VARCHAR(255),
+    nature_travaux    VARCHAR(255),
+    montant_estime    DECIMAL(15, 2),
+    montant_propose   DECIMAL(15, 2),
+    resultat          VARCHAR(50),
+    raison_resultat   TEXT,
+    date_soumission   DATE,
+    criteres_attribution JSONB,
+    note_technique    FLOAT,
+    note_prix         FLOAT,
+    region            VARCHAR(100),
+    description       TEXT,
+    embedding         vector(768),
+    is_active         BOOLEAN DEFAULT TRUE,
+    metadata          JSONB DEFAULT '{}',
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Triggers for tender tables
+CREATE TRIGGER update_tenders_updated_at BEFORE UPDATE ON tenders
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tender_documents_updated_at BEFORE UPDATE ON tender_documents
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tender_decisions_updated_at BEFORE UPDATE ON tender_decisions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_vinci_references_updated_at BEFORE UPDATE ON vinci_references
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_vinci_capabilities_updated_at BEFORE UPDATE ON vinci_capabilities
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_historical_tenders_updated_at BEFORE UPDATE ON historical_tenders
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Vector similarity search functions for tenders
+
+CREATE OR REPLACE FUNCTION search_similar_references(
+    query_embedding vector(768),
+    similarity_threshold FLOAT DEFAULT 0.7,
+    max_results INTEGER DEFAULT 10
+)
+RETURNS TABLE (
+    ref_id UUID,
+    reference_number VARCHAR,
+    project_name VARCHAR,
+    similarity_score FLOAT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        vr.id,
+        vr.reference_number,
+        vr.project_name,
+        1 - (vr.embedding <=> query_embedding) AS similarity_score
+    FROM vinci_references vr
+    WHERE vr.is_active = TRUE
+      AND vr.embedding IS NOT NULL
+      AND 1 - (vr.embedding <=> query_embedding) >= similarity_threshold
+    ORDER BY vr.embedding <=> query_embedding
+    LIMIT max_results;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION search_historical_tenders(
+    query_embedding vector(768),
+    similarity_threshold FLOAT DEFAULT 0.7,
+    max_results INTEGER DEFAULT 10
+)
+RETURNS TABLE (
+    ht_id UUID,
+    ao_number VARCHAR,
+    resultat VARCHAR,
+    similarity_score FLOAT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        ht.id,
+        ht.ao_number,
+        ht.resultat,
+        1 - (ht.embedding <=> query_embedding) AS similarity_score
+    FROM historical_tenders ht
+    WHERE ht.is_active = TRUE
+      AND ht.embedding IS NOT NULL
+      AND 1 - (ht.embedding <=> query_embedding) >= similarity_threshold
+    ORDER BY ht.embedding <=> query_embedding
+    LIMIT max_results;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
 -- COMPLETION
 -- ============================================================================
 -- not sure why current_database() shows as a syntax error... looks legit AFAIU

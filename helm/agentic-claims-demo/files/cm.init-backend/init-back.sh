@@ -67,11 +67,62 @@ fi
 
 echo ""
 echo ============================================
-echo Verifying files in PVC...
+echo "Download summary (claims): $DOWNLOADED successful, $FAILED failed"
 echo ============================================
-ls -lh "$TARGET_DIR"/*.pdf
+
+# ============================================
+# Tender / AO documents
+# ============================================
+echo ""
+echo ============================================
+echo Copying test AO (tender) documents to PVC
+echo ============================================
+
+AO_PDF_DIR=backend/test_data/tender_documents
+AO_TARGET_DIR=/claim_documents/ao
+mkdir -p $AO_TARGET_DIR
+
+AO_FILES=(
+  "ao_2026_0042.pdf"
+  "ao_2026_0043.pdf"
+  "ao_2026_0044.pdf"
+  "ao_2026_0045.pdf"
+  "ao_2026_0046.pdf"
+)
+
+AO_DOWNLOADED=0
+AO_FAILED=0
+
+for AO_FILE in "${AO_FILES[@]}"; do
+  URL="https://raw.githubusercontent.com/$REPO/$BRANCH/$AO_PDF_DIR/$AO_FILE"
+  echo "Downloading: $AO_FILE"
+
+  if curl -L -s -f -o "$AO_TARGET_DIR/$AO_FILE" "$URL"; then
+    echo "  OK Downloaded successfully"
+    AO_DOWNLOADED=$((AO_DOWNLOADED + 1))
+  else
+    echo "  FAIL Failed to download"
+    AO_FAILED=$((AO_FAILED + 1))
+  fi
+done
 
 echo ""
 echo ============================================
-echo "✓ Successfully copied ${#PDF_FILES[@]} test documents"
+echo "Download summary (AO): $AO_DOWNLOADED successful, $AO_FAILED failed"
+echo ============================================
+
+if [ "$FAILED" -gt 0 ] || [ "$AO_FAILED" -gt 0 ]; then
+  echo WARNING: Some files failed to download
+fi
+
+echo ""
+echo ============================================
+echo Verifying files in PVC...
+echo ============================================
+ls -lhR "$TARGET_DIR"/
+
+echo ""
+TOTAL=$((DOWNLOADED + AO_DOWNLOADED))
+echo ============================================
+echo "Done: $TOTAL documents copied ($DOWNLOADED claims + $AO_DOWNLOADED AO)"
 echo ============================================

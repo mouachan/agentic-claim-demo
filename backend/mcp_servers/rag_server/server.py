@@ -600,6 +600,322 @@ async def search_knowledge_base(
 
 
 # =============================================================================
+# MCP Tools - Appels d'Offres (Tenders)
+# =============================================================================
+
+@mcp.tool()
+async def retrieve_similar_references(
+    project_description: str,
+    project_type: Optional[str] = None,
+    budget_range: Optional[str] = None,
+    top_k: int = 5,
+    min_similarity: float = 0.5
+) -> str:
+    """
+    Find similar Vinci project references using vector similarity search.
+
+    This tool performs ONLY retrieval. No LLM analysis.
+    The LlamaStack agent will analyze the similar references.
+
+    Args:
+        project_description: Description of the project from the tender
+        project_type: Optional filter by project type (e.g., 'logements', 'infrastructure', 'genie_civil')
+        budget_range: Optional budget range description
+        top_k: Number of similar references to retrieve (default: 5)
+        min_similarity: Minimum similarity score 0.0-1.0 (default: 0.5)
+
+    Returns:
+        JSON string with similar project references
+    """
+    import time
+    start_time = time.time()
+
+    logger.info(f"Searching for similar references (top_k={top_k}, min_similarity={min_similarity}, project_type={project_type}, desc={project_description[:100] if project_description else 'None'})")
+
+    if not project_description or not project_description.strip():
+        return json.dumps({
+            "success": False,
+            "error": "project_description is required"
+        })
+
+    project_description = project_description.strip()
+    top_k = min(max(1, top_k), 100)
+    min_similarity = min(max(0.0, min_similarity), 1.0)
+
+    try:
+        query_embedding = await create_embedding(project_description)
+        embedding_str = format_embedding(query_embedding)
+
+        query = text("""
+            SELECT
+                reference_number,
+                project_name,
+                maitre_ouvrage,
+                nature_travaux,
+                montant,
+                region,
+                LEFT(description, 200) as description,
+                1 - (embedding <=> CAST(:query_embedding AS vector)) AS similarity
+            FROM vinci_references
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> CAST(:query_embedding AS vector)
+            LIMIT :top_k
+        """)
+
+        results = await run_db_query(
+            query,
+            {
+                "query_embedding": embedding_str,
+                "top_k": top_k
+            }
+        )
+
+        references = []
+        for row in results:
+            ref = dict(row._mapping)
+            if 'similarity' in ref and ref['similarity'] is not None:
+                ref['similarity'] = float(ref['similarity'])
+            if 'montant' in ref and ref['montant'] is not None:
+                ref['montant'] = float(ref['montant'])
+            references.append(ref)
+
+        logger.info(f"Found {len(references)} similar references")
+
+        processing_time = time.time() - start_time
+        return json.dumps({
+            "success": True,
+            "references": references,
+            "total_found": len(references),
+            "search_params": {
+                "top_k": top_k,
+                "min_similarity": min_similarity,
+                "project_type": project_type
+            },
+            "processing_time_seconds": round(processing_time, 2)
+        }, default=str)
+
+    except Exception as e:
+        logger.error(f"Error retrieving similar references: {str(e)}", exc_info=True)
+        processing_time = time.time() - start_time
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "processing_time_seconds": round(processing_time, 2)
+        })
+
+
+@mcp.tool()
+async def retrieve_historical_tenders(
+    tender_description: str,
+    tender_type: Optional[str] = None,
+    client_type: Optional[str] = None,
+    top_k: int = 5,
+    min_similarity: float = 0.5
+) -> str:
+    """
+    Find similar historical tenders (won/lost) using vector similarity search.
+
+    This tool performs ONLY retrieval. No LLM analysis.
+    The LlamaStack agent will analyze historical tender patterns.
+
+    Args:
+        tender_description: Description of the current tender
+        tender_type: Optional filter by tender type
+        client_type: Optional filter by client type (e.g., 'public', 'prive')
+        top_k: Number of similar tenders to retrieve (default: 5)
+        min_similarity: Minimum similarity score 0.0-1.0 (default: 0.5)
+
+    Returns:
+        JSON string with similar historical tenders
+    """
+    import time
+    start_time = time.time()
+
+    logger.info(f"Searching for historical tenders (top_k={top_k}, min_similarity={min_similarity}, tender_type={tender_type}, desc={tender_description[:100] if tender_description else 'None'})")
+
+    if not tender_description or not tender_description.strip():
+        return json.dumps({
+            "success": False,
+            "error": "tender_description is required"
+        })
+
+    tender_description = tender_description.strip()
+    top_k = min(max(1, top_k), 100)
+    min_similarity = min(max(0.0, min_similarity), 1.0)
+
+    try:
+        query_embedding = await create_embedding(tender_description)
+        embedding_str = format_embedding(query_embedding)
+
+        query = text("""
+            SELECT
+                ao_number,
+                nature_travaux,
+                maitre_ouvrage,
+                montant_estime,
+                resultat,
+                LEFT(raison_resultat, 150) as raison_resultat,
+                note_technique,
+                note_prix,
+                region,
+                1 - (embedding <=> CAST(:query_embedding AS vector)) AS similarity
+            FROM historical_tenders
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> CAST(:query_embedding AS vector)
+            LIMIT :top_k
+        """)
+
+        results = await run_db_query(
+            query,
+            {
+                "query_embedding": embedding_str,
+                "top_k": top_k
+            }
+        )
+
+        tenders = []
+        for row in results:
+            tender = dict(row._mapping)
+            if 'similarity' in tender and tender['similarity'] is not None:
+                tender['similarity'] = float(tender['similarity'])
+            if 'montant_estime' in tender and tender['montant_estime'] is not None:
+                tender['montant_estime'] = float(tender['montant_estime'])
+            if 'montant_propose' in tender and tender['montant_propose'] is not None:
+                tender['montant_propose'] = float(tender['montant_propose'])
+            if 'note_technique' in tender and tender['note_technique'] is not None:
+                tender['note_technique'] = float(tender['note_technique'])
+            if 'note_prix' in tender and tender['note_prix'] is not None:
+                tender['note_prix'] = float(tender['note_prix'])
+            tenders.append(tender)
+
+        won = sum(1 for t in tenders if t.get('resultat') == 'gagne')
+        total = len(tenders)
+        win_rate = (won / total * 100) if total > 0 else 0
+
+        logger.info(f"Found {len(tenders)} historical tenders (win rate: {win_rate:.1f}%)")
+
+        processing_time = time.time() - start_time
+        return json.dumps({
+            "success": True,
+            "historical_tenders": tenders,
+            "total_found": len(tenders),
+            "win_rate_percentage": round(win_rate, 1),
+            "search_params": {
+                "top_k": top_k,
+                "min_similarity": min_similarity,
+                "tender_type": tender_type
+            },
+            "processing_time_seconds": round(processing_time, 2)
+        }, default=str)
+
+    except Exception as e:
+        logger.error(f"Error retrieving historical tenders: {str(e)}", exc_info=True)
+        processing_time = time.time() - start_time
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "processing_time_seconds": round(processing_time, 2)
+        })
+
+
+@mcp.tool()
+async def retrieve_capabilities(
+    required_capabilities: str,
+    project_type: Optional[str] = None,
+    category: Optional[str] = None,
+    top_k: int = 10
+) -> str:
+    """
+    Retrieve Vinci internal capabilities, certifications, and resources.
+
+    This tool performs ONLY retrieval. No LLM analysis.
+    The LlamaStack agent will assess capability adequacy.
+
+    Args:
+        required_capabilities: Description of required capabilities for the tender
+        project_type: Optional project type filter
+        category: Optional category filter (e.g., 'certification', 'materiel', 'personnel')
+        top_k: Number of capabilities to retrieve (default: 20)
+
+    Returns:
+        JSON string with matching capabilities
+    """
+    import time
+    start_time = time.time()
+
+    logger.info(f"Retrieving capabilities (category={category}, top_k={top_k})")
+
+    if not required_capabilities or not required_capabilities.strip():
+        return json.dumps({
+            "success": False,
+            "error": "required_capabilities is required"
+        })
+
+    required_capabilities = required_capabilities.strip()
+    top_k = min(max(1, top_k), 50)
+
+    try:
+        query_embedding = await create_embedding(required_capabilities)
+        embedding_str = format_embedding(query_embedding)
+
+        query = text("""
+            SELECT
+                name,
+                category,
+                LEFT(description, 150) as description,
+                valid_until,
+                region,
+                availability,
+                1 - (embedding <=> CAST(:query_embedding AS vector)) AS similarity
+            FROM vinci_capabilities
+            WHERE is_active = true
+                AND embedding IS NOT NULL
+                AND (:category IS NULL OR category = :category)
+            ORDER BY embedding <=> CAST(:query_embedding AS vector)
+            LIMIT :top_k
+        """)
+
+        results = await run_db_query(
+            query,
+            {
+                "query_embedding": embedding_str,
+                "category": category,
+                "top_k": top_k
+            }
+        )
+
+        capabilities = []
+        for row in results:
+            cap = dict(row._mapping)
+            if 'similarity' in cap and cap['similarity'] is not None:
+                cap['similarity'] = float(cap['similarity'])
+            capabilities.append(cap)
+
+        # Group by category (for stats only)
+        categories_found = list(set(cap.get('category', 'other') for cap in capabilities))
+
+        logger.info(f"Found {len(capabilities)} capabilities across {len(categories_found)} categories")
+
+        processing_time = time.time() - start_time
+        return json.dumps({
+            "success": True,
+            "capabilities": capabilities,
+            "total_found": len(capabilities),
+            "categories_found": categories_found,
+            "processing_time_seconds": round(processing_time, 2)
+        }, default=str)
+
+    except Exception as e:
+        logger.error(f"Error retrieving capabilities: {str(e)}", exc_info=True)
+        processing_time = time.time() - start_time
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "processing_time_seconds": round(processing_time, 2)
+        })
+
+
+# =============================================================================
 # Health Check Tool and Endpoint
 # =============================================================================
 
@@ -724,6 +1040,9 @@ if __name__ == "__main__":
     logger.info("  - retrieve_user_info: Get user + contracts (vector search)")
     logger.info("  - retrieve_similar_claims: Find similar claims (vector search)")
     logger.info("  - search_knowledge_base: Search KB articles (vector search)")
+    logger.info("  - retrieve_similar_references: Find similar Vinci project references (vector search)")
+    logger.info("  - retrieve_historical_tenders: Find historical tenders won/lost (vector search)")
+    logger.info("  - retrieve_capabilities: Get Vinci certifications and capabilities (vector search)")
     logger.info("  - rag_health_check: Check server health")
 
     # Run uvicorn with FastMCP SSE app
