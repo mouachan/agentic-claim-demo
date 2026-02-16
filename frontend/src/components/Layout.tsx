@@ -20,7 +20,7 @@ export default function Layout({ children }: LayoutProps) {
           <div className="flex justify-between h-16">
             <div className="flex">
               <div className="flex-shrink-0 flex items-center">
-                <h1 className="text-2xl font-bold">Claims Processing Demo</h1>
+                <h1 className="text-2xl font-bold">Agentic AI Platform</h1>
               </div>
               <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
                 <Link
@@ -36,6 +36,12 @@ export default function Layout({ children }: LayoutProps) {
                   Claims
                 </Link>
                 <Link
+                  to="/tenders"
+                  className={`${isActive('/tenders')} inline-flex items-center px-4 py-2 text-sm font-medium rounded-md hover:bg-blue-700 transition-colors`}
+                >
+                  Appels d'Offres
+                </Link>
+                <Link
                   to="/admin"
                   className={`${isActive('/admin')} inline-flex items-center px-4 py-2 text-sm font-medium rounded-md hover:bg-blue-700 transition-colors`}
                 >
@@ -44,7 +50,7 @@ export default function Layout({ children }: LayoutProps) {
               </div>
             </div>
             <div className="flex items-center">
-              <span className="text-sm text-blue-100">Agentic Claims System</span>
+              <span className="text-sm text-blue-100">Multi-Agent AI Platform</span>
             </div>
           </div>
         </div>
@@ -59,7 +65,7 @@ export default function Layout({ children }: LayoutProps) {
       <footer className="bg-white border-t border-gray-200 mt-12">
         <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
           <p className="text-center text-sm text-gray-500">
-            Claims Processing Demo - Powered by LlamaStack, MCP Agents & OpenShift AI
+            Agentic AI Platform - Powered by LlamaStack, MCP Agents & OpenShift AI
           </p>
         </div>
       </footer>
