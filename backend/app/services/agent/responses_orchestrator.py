@@ -28,15 +28,15 @@ class ResponsesOrchestrator:
         self.timeout = timeout
         self.model = settings.llamastack_default_model
 
-        # MCP server configurations
+        # MCP server configurations - from environment/config
         self.mcp_servers = {
             "ocr-server": {
                 "server_label": "ocr-server",
-                "server_url": "http://ocr-server.claims-demo.svc.cluster.local:8080/sse"
+                "server_url": f"{settings.ocr_server_url}/sse"
             },
             "rag-server": {
                 "server_label": "rag-server",
-                "server_url": "http://rag-server.claims-demo.svc.cluster.local:8080/sse"
+                "server_url": f"{settings.rag_server_url}/sse"
             }
         }
 

@@ -69,12 +69,10 @@ class Settings(BaseSettings):
     llamastack_max_retries: int = 3
     llamastack_max_tokens: int = 4096  # max tokens for responses (avoid exceeding model context)
 
-    # MCP Servers
-    ocr_server_url: str = "http://ocr-server.claims-demo.svc.cluster.local:8080"
-    rag_server_url: str = "http://rag-server.claims-demo.svc.cluster.local:8080"
-    guardrails_server_url: str = (
-        "http://claims-guardrails.claims-demo.svc.cluster.local:8080"
-    )
+    # MCP Servers (overridden by OCR_SERVER_URL, RAG_SERVER_URL, GUARDRAILS_SERVER_URL env vars)
+    ocr_server_url: str = "http://ocr-server:8080"
+    rag_server_url: str = "http://rag-server:8080"
+    guardrails_server_url: str = "http://guardrails:8080"
 
     # Guardrails/Shields Configuration
     enable_pii_detection: bool = False  # Set to True to enable PII detection via shields
